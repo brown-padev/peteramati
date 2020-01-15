@@ -681,7 +681,7 @@ class QueueItem {
         }
         $command .= " " . escapeshellarg($homedir)
             . " " . escapeshellarg($username)
-            . " TERM=xterm-256color"
+            . " TERM=xterm-16color"
             . " " . escapeshellarg($this->expand($runner->command));
         $this->_runstatus = 0;
         $this->run_and_log($command);
