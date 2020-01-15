@@ -1150,7 +1150,6 @@ class QueueItem {
         } else {
             $cmdarg[] = "--fg";
         }
-
         $cmdarg[] = $homedir;
         $cmdarg[] = $username;
         $cmdarg[] = "TERM=xterm-256color";
