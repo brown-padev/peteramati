@@ -89,6 +89,8 @@ class Unary_GradeFormula extends GradeFormula {
             return $v0 > 0 ? log($v0) : null;
         case "lg":
             return $v0 > 0 ? log($v0) / log(2) : null;
+        case "floor":
+            return floor($v0);
         case "exp":
             return exp($v0);
         }
