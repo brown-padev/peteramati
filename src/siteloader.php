@@ -14,7 +14,8 @@ class SiteLoader {
         "Pset" => "src/psetconfig.php",
         "QueueStatus" => "src/queueitem.php",
         "ZipDocument" => "lib/documenthelper.php",
-        "Collator" => "lib/collatorshim.php"
+        "Collator" => "lib/collatorshim.php",
+        "Midterm2022" => "/opt/peteramati/conf/cs300-s22/midterm2022.php"
     ];
 
     static $suffix_map = [
