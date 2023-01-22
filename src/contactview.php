@@ -75,26 +75,37 @@ class ContactView {
         }
     }
 
+    /** @param string $u
+     * @param Contact $viewer
+     * @param bool $default_anonymous
+     * @return ?Contact */
+    static function find_user($u, $viewer, $default_anonymous = false) {
+        $user = $viewer->conf->user_by_whatever($u);
+        if (!$user) {
+            return null;
+        }
+        if ($user && $user->contactId === $viewer->contactId) {
+            return $viewer;
+        }
+        $user->set_anonymous(str_starts_with($u, "[anon") || $default_anonymous);
+        return $user;
+    }
+
     /** @param Qrequest $qreq
      * @param ?Pset $pset
      * @return ?Contact */
     static function prepare_user($qreq, $viewer, $pset = null) {
         $user = $viewer;
         if (isset($qreq->u) && $qreq->u) {
-            $user = $viewer->conf->user_by_whatever($qreq->u);
+            $user = self::find_user($qreq->u, $viewer, $pset && $pset->anonymous);
             if (!$user) {
                 $viewer->conf->errorMsg("No such user “" . htmlspecialchars($qreq->u) . "”.");
-            } else if ($user->contactId == $viewer->contactId) {
-                $user = $viewer;
-            } else if (!$viewer->isPC) {
+            } else if ($user->contactId !== $viewer->contactId && !$viewer->isPC) {
                 $viewer->conf->errorMsg("You can’t see that user’s information.");
                 $user = null;
-            } else {
-                $user->set_anonymous(substr($qreq->u, 0, 5) === "[anon"
-                                     || ($pset && $pset->anonymous));
             }
         }
-        if ($user && ($viewer->isPC || $viewer->chairContact)) {
+        if ($user && $viewer->isPC) {
             if ($pset && $pset->anonymous) {
                 $qreq->u = $user->anon_username;
             } else {
@@ -131,7 +142,7 @@ class ContactView {
     static function echo_heading($user, $viewer) {
         $u = $viewer->user_linkpart($user);
         if ($user !== $viewer && !$user->is_anonymous && $user->contactImageId) {
-            echo '<img class="pa-smallface float-left" src="' . $user->conf->hoturl("face", array("u" => $u, "imageid" => $user->contactImageId)) . '" />';
+            echo '<img class="pa-smallface float-left" src="' . $user->conf->hoturl("face", ["u" => $u, "imageid" => $user->contactImageId]) . '" />';
         }
 
         echo '<h2 class="homeemail"><a href="',
@@ -172,8 +183,10 @@ class ContactView {
         echo '<hr class="c" />';
     }
 
-    static function echo_group($key, $value, $notes = null) {
-        echo "<div class=\"pa-p\"><div class=\"pa-pt\">", $key, "</div><div class=\"pa-pv\">";
+    static function echo_group($key, $value, $notes = null, $id = null) {
+        echo '<div class="pa-p">',
+            $id ? Ht::label($key, $id, ["class" => "pa-pt"]) : "<div class=\"pa-pt\">{$key}</div>",
+            '<div class="pa-pv">';
         if ($notes && $value && !str_starts_with($value, '<div')) {
             $value = "<div>" . $value . "</div>";
         }
@@ -292,17 +305,12 @@ class ContactView {
         if ($repo && $repo->url) {
             $title = $user->link_repo($title, $repo->https_url());
         }
+        $id = null;
 
         if ($editable) {
             $xvalue = $repo_url;
-            $js = ["style" => "width:32em"];
-            if ($repo_url === ""
-                && isset($Qreq->set_repo)
-                && $Qreq->pset === $pset->urlkey
-                && isset($Qreq->repo)) {
-                $xvalue = htmlspecialchars($Qreq->repo);
-                $js["class"] = "error";
-            }
+            $id = "repo-u{$user->contactId}p{$pset->id}";
+            $js = ["style" => "width:32em", "id" => $id];
             $value = Ht::entry("repo", $xvalue, $js) . " " . Ht::submit("Save");
         } else if ($user->is_anonymous) {
             $value = $repo_url ? "[anonymous]" : "(none)";
@@ -324,10 +332,9 @@ class ContactView {
 
         // check repo
         $ms = new MessageSet;
-        $ms->user = $user;
         if ($repo) {
-            $repo->check_working($ms);
-            $repo->check_open($ms);
+            $repo->check_working($user, $ms);
+            $repo->check_open();
         }
         if ($partner && $info->partner_same() && !$pset->partner_repo) {
             $prepo = $partner->repo($pset->id);
@@ -369,12 +376,11 @@ class ContactView {
 
         // edit
         if ($editable) {
-            echo Ht::form($info->conf->selfurl(null, ["set_repo" => 1, "pset" => $pset->urlkey], Conf::HOTURL_POST)),
-                '<div class="f-contain">';
+            echo '<form data-pa-pset="', $pset->urlkey, '" class="ui-submit pa-setrepo">';
         }
-        self::echo_group($title, $value, $notes);
+        self::echo_group($title, $value, $notes, $id);
         if ($editable) {
-            echo "</div></form>\n";
+            echo "</form>\n";
         }
 
         if (!$pset->no_branch) {
@@ -390,21 +396,23 @@ class ContactView {
             array($info->user, $info->pset, $info->partner, $info->repo);
         $editable = $info->viewer->can_set_repo($pset, $user) && !$user->is_anonymous;
         $branch = $user->branch($pset);
+        $id = null;
 
         if ($editable) {
+            $id = "branch-u{$user->contactId}p{$pset->id}";
             if ((!$repo && !$user->has_branch($pset))
                 || $branch === $pset->main_branch) {
                 $xvalue = null;
             } else {
                 $xvalue = $branch;
             }
-            $js = ["style" => "width:32em", "placeholder" => $pset->main_branch];
-            if (isset($Qreq->set_branch)
-                && $Qreq->pset === $pset->urlkey
-                && isset($Qreq->branch)) {
-                $xvalue = htmlspecialchars($Qreq->branch);
-                $js["class"] = "error";
-            }
+            $js = [
+                "style" => "width:32em",
+                "id" => $id,
+                "placeholder" => $pset->main_branch,
+                "class" => $repo ? "ui-focusin pa-branch-datalist" : null,
+                "data-pa-repoid" => $repo ? "repo{$repo->repoid}" : null
+            ];
             $value = Ht::entry("branch", $xvalue, $js) . " " . Ht::submit("Save");
         } else if ($user->is_anonymous) {
             $value = $branch && $branch !== $pset->main_branch ? "[anonymous]" : $pset->main_branch;
@@ -414,12 +422,11 @@ class ContactView {
 
         // edit
         if ($editable) {
-            echo Ht::form($info->conf->selfurl(null, ["set_branch" => 1, "pset" => $pset->urlkey], Conf::HOTURL_POST)),
-                '<div class="f-contain">';
+            echo '<form data-pa-pset="', $pset->urlkey, '" class="ui-submit pa-setbranch">';
         }
-        self::echo_group("branch", $value, []);
+        self::echo_group("branch", $value, [], $id);
         if ($editable) {
-            echo "</div></form>\n";
+            echo '</form>';
         }
     }
 
@@ -469,123 +476,10 @@ class ContactView {
         }
     }
 
-    /** @param Contact $user
-     * @param Contact $viewer
-     * @param Qrequest $qreq */
-    static function set_repo_action($user, $viewer, $qreq) {
-        $conf = $viewer->conf;
-        if (!($viewer->has_account_here()
-              && $qreq->valid_post()
-              && ($pset = $conf->pset_by_key($qreq->pset)))) {
-            return;
-        }
-        if (!$viewer->can_set_repo($pset, $user)) {
-            return Conf::msg_error("You can’t edit repository information for that problem set now.");
-        }
-
-        // clean up repo url
-        $repo_url = trim($qreq->repo);
-        if ($repo_url === "") {
-            $user->set_repo($pset, null);
-            $conf->redirect_self($qreq);
-        }
-
-        // extend it to full url
-        if (($rgp = $pset->repo_guess_patterns) !== null) {
-            for ($i = 0; $i + 1 < count($rgp); $i += 2) {
-                $x = preg_replace('`' . str_replace("`", "\\`", $rgp[$i]) . '`s',
-                                  $rgp[$i + 1], $repo_url, -1, $nreplace);
-                if ($x !== null && $nreplace) {
-                    $repo_url = $x;
-                    break;
-                }
-            }
-        }
-
-        // does it contain odd characters?
-        if (preg_match('_[,;\[\](){}\\<>&#=\\000-\\027]_', $repo_url)) {
-            return Conf::msg_error("That repository contains funny characters. Remove them.");
-        }
-
-        // record interested repositories
-        $try_classes = [];
-        foreach (RepositorySite::site_classes($user->conf) as $sitek) {
-            $sniff = $sitek::sniff_url($repo_url);
-            if ($sniff == 2) {
-                $try_classes = [$sitek];
-                break;
-            } else if ($sniff) {
-                $try_classes[] = $sitek;
-            }
-        }
-        if (empty($try_classes)) {
-            return Conf::msg_error("Invalid repository URL “" . htmlspecialchars($repo_url) . "”.");
-        }
-
-        // check repositories
-        $ms = new MessageSet;
-        $ms->user = $user;
-        foreach ($try_classes as $sitek) {
-            $reposite = $sitek::make_url($repo_url, $user->conf);
-            if ($reposite && $reposite->validate_working($ms) > 0) {
-                $repo = Repository::find_or_create_url($reposite->url, $user->conf);
-                if ($repo) {
-                    $repo->check_open();
-                }
-                if ($user->set_repo($pset, $repo)) {
-                    $conf->redirect_self($qreq);
-                }
-                return;
-            }
-        }
-
-        // if !working, complain
-        if (!$ms->has_problem()) {
-            Conf::msg_error("Can’t access the repository “" . htmlspecialchars($repo_url) . "” (tried " . join(", ", array_map(function ($m) { return $m::global_friendly_siteclass(); }, $try_classes)) . ").");
-        } else {
-            $msgs = join("<br />", $ms->message_texts()) ? : "Repository unreachable at the moment.";
-            Conf::msg_error($msgs);
-        }
-    }
-
-    /** @param Contact $user
-     * @param Contact $viewer
-     * @param Qrequest $qreq */
-    static function set_branch_action($user, $viewer, $qreq) {
-        if (!($viewer->has_account_here()
-              && $qreq->valid_post()
-              && ($pset = $user->conf->pset_by_key($qreq->pset))
-              && !$pset->no_branch)) {
-            return;
-        }
-        if (!$viewer->can_set_repo($pset, $user)) {
-            return Conf::msg_error("You can’t edit repository information for that problem set now.");
-        }
-
-        $branch = trim($qreq->branch);
-        if ($branch === "") {
-            $branch = $pset->main_branch;
-        }
-        if (!Repository::validate_branch($branch)) {
-            return Conf::msg_error("That branch contains funny characters. Remove them.");
-        }
-
-        $branchid = $user->conf->ensure_branch($branch);
-        if ($branchid === null
-            || ($branchid === 0
-                && ($pset->main_branch === "master"
-                    || $user->repo($pset->id)))) {
-            $user->clear_links(LINK_BRANCH, $pset->id);
-        } else {
-            $user->set_link(LINK_BRANCH, $pset->id, $branchid);
-        }
-        $viewer->conf->redirect_self($qreq);
-    }
-
     static function late_hour_note(PsetView $info) {
         if (($lh = $info->late_hours())
             && $lh > 0
-            && (!$info->pset->obscure_late_hours || $info->can_view_grade())) {
+            && (!$info->pset->obscure_late_hours || $info->can_view_some_grade())) {
             $t = plural($lh, "late hour") . " used";
             if (!$info->pset->obscure_late_hours) {
                 $t = '<strong class="overdue">' . $t . '</strong>';

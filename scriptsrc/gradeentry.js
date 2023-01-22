@@ -2,30 +2,58 @@
 // Peteramati is Copyright (c) 2006-2021 Eddie Kohler
 // See LICENSE for open-source distribution terms
 
-import { escape_entities, unescape_entities, html_id_encode } from "./encoders.js";
-import { hasClass, toggleClass, removeClass, input_set_default_value } from "./ui.js";
+import { escape_entities, html_id_encode } from "./encoders.js";
+import { hasClass, addClass, toggleClass, removeClass,
+    input_default_value, input_set_default_value, input_differs } from "./ui.js";
 import { Filediff, Linediff } from "./diff.js";
 import { Note } from "./note.js";
 import { GradeClass } from "./gc.js";
-import { render_ftext } from "./render.js";
+import { render_onto } from "./render.js";
 
 
 let id_counter = 0, late_hours_entry;
 const gradesheet_props = {
-    "pset": true, "uid": true, "user": true,
-    "commit": true, "base_commit": true, "base_handout": true,
-    "late_hours": true, "auto_late_hours": true, "student_timestamp": true,
-    "version": true, "history": true, "total": true,
-    "total_noextra": true, "grading_hash": true, "answer_version": true,
-    "user_scores_visible": true, "scores_editable": true, "answers_editable": true,
-    "linenotes": true
+    // must include props from GradeExport and from StudentSet::json_basics
+    "pset": true,
+    "uid": true, "user": true, "anon_user": true, "email": true, "first": true, "last": true,
+    "year": true, "x": true, "dropped": true, "imageid": true,
+    "commit": true, "base_commit": true, "base_handout": true, "grade_commit": true, "emptydiff": true,
+    "late_hours": true, "auto_late_hours": true,
+    "student_timestamp": true, "grades_latest": true,
+    "version": true, "history": true, "total_type": true, "total": true,
+    "total_noextra": true, "answer_version": true,
+    "scores_editable": true, "answers_editable": true,
+    "linenotes": true, "gradercid": true, "has_notes": true, "has_nongrader_notes": true,
+    "repo": true, "repo_broken": true, "repo_unconfirmed": true,
+    "repo_too_open": true, "repo_handout_old": true, "repo_partner_error": true,
+    "repo_sharing": true,
+    "flagid": true, "conversation": true, "conversation_pfx": true, "at": true
 };
+
+function pa_resetgrade() {
+    removeClass(this, "pa-resetgrade");
+    this.removeEventListener(this, pa_resetgrade, false);
+    if (!input_differs(this)) {
+        const gi = GradeSheet.closest(this),
+            gr = this.closest(".pa-grade");
+        queueMicrotask(function () { gi.update_at(gr); });
+    }
+}
+
+function title_span(ftext) {
+    const x = document.createElement("span");
+    document.body.appendChild(x);
+    render_onto(x, "f", ftext);
+    x.remove();
+    return x;
+}
 
 export class GradeEntry {
     constructor(x) {
         Object.assign(this, x);
         this.type = this.type || "numeric";
         this.gc = GradeClass.find(this.type);
+        this.disabled = !!this.disabled;
         this.normal = true;
         this._abbr = null;
         this._all = null;
@@ -35,39 +63,32 @@ export class GradeEntry {
         return this.gc.type_tabular;
     }
 
+    student_visible(gi) {
+        return this.visible === true
+            || (this.visible == null && (this.answer || gi.scores_visible));
+    }
+
     get title_html() {
-        let t = this.title, ch, int;
+        let t = this.title, ch;
         if (!t) {
             return this.key;
         } else if (t.charAt(0) === "<"
                    && (ch = t.charAt(1)) >= "0"
                    && ch <= "9") {
-            t = render_ftext(t).trim();
-            if (t.startsWith("<p>")
-                && t.endsWith("</p>")
-                && (int = t.substring(3, t.length - 4)).indexOf("</p>") < 0) {
-                t = int;
-            }
-            return t;
+            return title_span(t).innerHTML;
         } else {
             return escape_entities(t);
         }
     }
 
     get title_text() {
-        let t = this.title, ch, int;
+        let t = this.title, ch;
         if (!t) {
             return this.key;
         } else if (t.charAt(0) === "<"
                    && (ch = t.charAt(1)) >= "0"
                    && ch <= "9") {
-            t = render_ftext(t).trim();
-            if (t.startsWith("<p>")
-                && t.endsWith("</p>")
-                && (int = t.substring(3, t.length - 4)).indexOf("</p>") < 0) {
-                t = int;
-            }
-            return unescape_entities(t);
+            return title_span(t).textContext;
         } else {
             return t;
         }
@@ -128,14 +149,9 @@ export class GradeEntry {
         const id = "pe-ge" + ++id_counter,
             pge = document.createElement("div"),
             le = document.createElement("label"),
-            pde = document.createElement(mode === 2 ? "form" : "div");
-        let klass = "pa-grade pa-p".concat(mode ? " e" : "", this.answer ? " pa-ans" : "");
-        if ((this.visible == null && !this.answer && gi.user_scores_visible === false)
-            || this.visible === false
-            || this.visible === "none") {
-            klass += " pa-p-hidden";
-        }
-        pge.className = klass;
+            pde = document.createElement(mode === 2 ? "form" : "div"),
+            hidden = this.student_visible(gi) ? "" : " pa-p-hidden";
+        pge.className = "pa-grade pa-p".concat(mode ? " e" : "", this.answer ? " pa-ans" : "", hidden);
         pge.setAttribute("data-pa-grade", this.key);
         le.className = "pa-pt";
         le.htmlFor = id;
@@ -144,7 +160,7 @@ export class GradeEntry {
         if (this.description) {
             const de = document.createElement("div");
             de.className = "pa-pdesc pa-dr";
-            de.innerHTML = render_ftext(this.description);
+            render_onto(de, "f", this.description);
             pge.appendChild(de);
         }
         pde.className = mode === 2 ? "ui-submit pa-pv" : "pa-pv";
@@ -162,6 +178,8 @@ export class GradeEntry {
         }
         if (typeof t === "string") {
             pde.innerHTML = t;
+        } else if (t instanceof Node) {
+            pde.replaceChildren(t);
         }
         if (edit) {
             $(pde).find(".need-autogrow").autogrow();
@@ -169,7 +187,23 @@ export class GradeEntry {
     }
 
     update_edit(pde, v, opts) {
-        const $pde = $(pde);
+        const $pde = $(pde),
+            ve = pde.querySelector(".pa-gradevalue"),
+            vt = this.simple_text(v);
+
+        // check whether to skip update
+        if (hasClass(pde, "pa-saving")) {
+            return;
+        } else if (ve
+                   && ve.type !== "hidden"
+                   && ve.matches(":focus")) {
+            if (!hasClass(ve, "pa-resetgrade")
+                && vt !== input_default_value(ve)) {
+                addClass(ve, "pa-resetgrade");
+                ve.addEventListener("blur", pa_resetgrade, false);
+            }
+            return;
+        }
 
         // “grade is above max” message
         if (this.max) {
@@ -200,38 +234,46 @@ export class GradeEntry {
         }
 
         // grade value
-        this.gc.update_edit.call(this, pde, v, opts);
+        if (opts.reset || !ve || input_default_value(ve) !== vt) {
+            this.gc.update_edit.call(this, pde, v, opts);
+        }
 
         // reset, tabIndex
-        if (opts.reset || opts.sidebar) {
-            const ve = pde.querySelector(".pa-gradevalue");
-            if (ve && opts.reset) {
-                input_set_default_value(ve, this.simple_text(v));
-            }
-            if (ve && opts.sidebar) {
-                ve.tabIndex = -1;
-                ve.classList.add("uikd", "pa-sidebar-tab");
-            }
+        if (ve && opts.reset) {
+            input_set_default_value(ve, vt);
+        }
+        if (ve && opts.sidebar) {
+            ve.tabIndex = -1;
+            ve.classList.add("uikd", "pa-sidebar-tab");
         }
 
         // landmark
-        this.landmark && this.update_landmark(pde);
+        if (this.landmark) {
+            this.update_landmark(pde);
+        }
 
         // finally grow
         $(pde).find("input, textarea").autogrow();
     }
 
     update_show(pde, v, opts) {
-        const ve = pde.classList.contains("pa-gradevalue") ? pde : pde.querySelector(".pa-gradevalue");
+        const ve = pde.classList.contains("pa-gradevalue")
+            ? pde
+            : pde.querySelector(".pa-gradevalue");
         let hidden;
         if (this.gc.update_show) {
             hidden = this.gc.update_show.call(this, ve, v, opts);
         } else {
-            const gt = this.text(v);
-            if (ve.innerText !== gt) {
-                ve.innerText = gt;
-            }
+            let gt = this.text(v);
             hidden = gt === "" && (!this.max || this.required) && !this.answer;
+            if (!hidden) {
+                if (gt === "") {
+                    gt = "—";
+                }
+                if (ve.textContent !== gt) {
+                    ve.textContent = gt;
+                }
+            }
         }
         hidden != null && toggleClass(pde.closest(".pa-grade"), "hidden", hidden);
         this.landmark && this.update_landmark(pde);
@@ -270,6 +312,10 @@ export class GradeEntry {
         }
     }
 
+    unmount_at(elt) {
+        this.gc.unmount.call(this, elt);
+    }
+
     text(v) {
         return this.gc.text.call(this, v);
     }
@@ -278,8 +324,8 @@ export class GradeEntry {
         return this.gc.simple_text.call(this, v);
     }
 
-    configure_column(col, pconf) {
-        return this.gc.configure_column.call(this, col, pconf);
+    configure_column(col) {
+        return this.gc.configure_column.call(this, col);
     }
 
     tcell_width() {
@@ -382,26 +428,26 @@ export class GradeEntry {
         return sum;
     }
 
+    value_order_in(gi) {
+        const i = gi.vpos[this.key];
+        return i != null ? i : null;
+    }
+
     value_in(gi) {
-        const i = gi.grades ? gi.gpos[this.key] : null;
+        const i = gi.grades ? gi.vpos[this.key] : null;
         return i != null ? gi.grades[i] : null;
     }
 
     autovalue_in(gi) {
-        const i = gi.autogrades ? gi.gpos[this.key] : null;
+        const i = gi.autogrades ? gi.vpos[this.key] : null;
         return i != null ? gi.autogrades[i] : null;
     }
 
-    gversion_in(gi) {
-        const i = gi.gpos[this.key];
-        return i != null ? gi.gversion[i] : null;
-    }
-
-    has_newer_value_in(gi) {
+    has_later_value_in(gi) {
         return this.answer
-            && gi.student_grade_updates
-            && this.key in gi.student_grade_updates
-            && this.value_in(gi) !== gi.student_grade_updates[this.key];
+            && gi.grades_latest
+            && this.key in gi.grades_latest
+            && this.value_in(gi) !== gi.grades_latest[this.key];
     }
 
     static closest(elt) {
@@ -432,39 +478,44 @@ class LateHoursEntry extends GradeEntry {
 export class GradeSheet {
     constructor(x) {
         this.entries = {};
-        this.gversion = [];
-        x && this.extend(x);
+        this.parent = null;
+        this.root = this;
+        if (x) {
+            this.assign(x);
+        }
     }
 
-    extend(x, replace_order) {
+    make_child() {
+        const gi = new GradeSheet;
+        Object.assign(gi, this);
+        gi.parent = gi.root = this;
+        return gi;
+    }
+
+    set_entry(ge) {
+        if (this.entries !== this.root.entries) { throw new Error("!"); }
+        this.entries[ge.key] = ge;
+        ge._all = this.root;
+    }
+
+    assign(x) {
         const old_value_order = this.value_order;
-        let need_gpos = false;
         if (x.entries) {
             for (let i in x.entries) {
-                this.entries[i] = new GradeEntry(x.entries[i]);
-                this.entries[i]._all = this;
+                this.set_entry(new GradeEntry(x.entries[i]));
             }
         }
-        if (x.value_order && (!this.explicit_value_order || replace_order)) {
-            this.value_order = x.value_order;
-            this.explicit_value_order = true;
-            need_gpos = true;
-        }
-        if (x.order && (!this.order || replace_order)) {
+        if (x.order) {
             this.order = x.order;
-            if (!this.explicit_value_order) {
-                this.value_order = x.order;
-                need_gpos = true;
-            }
         }
-        if (need_gpos) {
-            while (this.gversion.length < this.value_order.length) {
-                this.gversion.push(0);
-            }
-            this.gpos = {};
-            for (let i = 0; i < this.value_order.length; ++i) {
-                this.gpos[this.value_order[i]] = i;
-                ++this.gversion[i];
+        if (x.fixed_value_order && !this.parent) {
+            this.fixed_value_order = x.fixed_value_order;
+        }
+        this.value_order = this.fixed_value_order || this.order;
+        if (this.value_order !== old_value_order) {
+            this.vpos = {};
+            for (let i = 0; i !== this.value_order.length; ++i) {
+                this.vpos[this.value_order[i]] = i;
             }
             if (old_value_order) {
                 this.grades = this.autogrades = this.maxtotal = null;
@@ -476,34 +527,37 @@ export class GradeSheet {
         if (x.autogrades) {
             this.autogrades = this.merge_grades(this.autogrades, x.autogrades, x);
         }
-        if (x.student_grade_updates) {
-            this.student_grade_updates = x.student_grade_updates;
-        }
-        while (this.grades && this.gversion.length < this.grades.length) {
-            this.gversion.push(0);
+        if ("scores_visible" in x) {
+            if (this.parent) {
+                if ((this.scores_visible_pinned = x.scores_visible != null)) {
+                    this.scores_visible = x.scores_visible;
+                } else {
+                    this.scores_visible = this.parent.scores_visible;
+                }
+            } else {
+                this.scores_visible = x.scores_visible;
+            }
         }
         for (let k in x) {
             if (gradesheet_props[k])
                 this[k] = x[k];
         }
+        return this;
     }
 
     merge_grades(myg, ing, x) {
-        let inorder = x.value_order || x.order || this.value_order;
+        let inorder = x.fixed_value_order || x.order || this.value_order;
         if (!myg && inorder === this.value_order) {
             return ing;
         } else {
             myg = myg || [];
             for (let i in inorder) {
-                const j = this.gpos[inorder[i]];
+                const j = this.vpos[inorder[i]];
                 if (j != null) {
                     while (myg.length <= j) {
                         myg.push(null);
                     }
-                    if (myg[j] != ing[i]) {
-                        myg[j] = ing[i];
-                        ++this.gversion[j];
-                    }
+                    myg[j] = ing[i];
                 }
             }
             return myg;
@@ -518,6 +572,12 @@ export class GradeSheet {
             return GradeEntry.late_hours();
         } else {
             return null;
+        }
+    }
+
+    *value_entries() {
+        for (const key of this.value_order) {
+            yield this.entries[key];
         }
     }
 
@@ -541,42 +601,43 @@ export class GradeSheet {
             elt.replaceChild(pdx, pde);
             mode === 2 && removeClass(elt, "hidden");
             ge.mount_at(pdx, id, mode !== 0);
-            elt.removeAttribute("data-pa-gv");
             $(pde).find("input, textarea").unautogrow();
         }
     }
 
     update_at(elt, opts) {
         const ge = this.xentry(elt.getAttribute("data-pa-grade"));
-        let gver;
-        if (ge && ((gver = ge.gversion_in(this)) === null
-                   || elt.getAttribute("data-pa-gv") != gver)) {
-            const xopts = {gradesheet: this, autograde: ge.autovalue_in(this)};
-            let gval = ge.value_in(this);
-            opts && Object.assign(xopts, opts);
-            if (ge.has_newer_value_in(this)) {
-                const label = elt.firstChild;
-                if (label.classList.contains("pa-is-grade-update")) {
-                    gval = this.student_grade_updates[ge.key];
-                } else if (!label.classList.contains("uic")) {
-                    label.classList.add("pa-has-grade-update", "uic", "need-tooltip");
-                    label.setAttribute("aria-label", "Toggle latest version");
-                }
+        // find value to assign
+        let gval = ge.value_in(this);
+        if (ge.has_later_value_in(this)) {
+            const label = elt.firstChild;
+            if (label.classList.contains("pa-grade-latest")) {
+                gval = this.grades_latest[ge.key];
+            } else if (!label.classList.contains("uic")) {
+                label.classList.add("pa-grade-earlier", "uic", "need-tooltip");
+                label.setAttribute("aria-label", "Toggle latest version");
             }
-            gver !== null && elt.setAttribute("data-pa-gv", gver);
-            ge.update_at(elt, gval, xopts);
         }
+        // perform update
+        const xopts = {gradesheet: this, autograde: ge.autovalue_in(this)};
+        if (opts) {
+            Object.assign(xopts, opts);
+        }
+        ge.update_at(elt, gval, xopts);
     }
 
     grade_total(noextra) {
-        let total = 0;
+        let total = null;
         for (let i = 0; i !== this.value_order.length; ++i) {
             const ge = this.entries[this.value_order[i]];
             if (ge && ge.in_total && (!noextra || !ge.is_extra)) {
-                total += (this.grades && this.grades[i]) || 0;
+                const gv = this.grades && this.grades[i];
+                if (gv != null) {
+                    total = (total || 0) + gv;
+                }
             }
         }
-        return Math.round(total * 1000) / 1000;
+        return total !== null ? Math.round(total * 1000) / 1000 : total;
     }
 
     get grade_maxtotal() {
@@ -624,7 +685,7 @@ export class GradeSheet {
     }
 
     section_has(ge, f) {
-        let start = this.gpos[ge.key];
+        let start = this.vpos[ge.key];
         while (start != null && start < this.value_order.length) {
             const gei = this.entries[this.value_order[start]];
             if (gei !== ge && gei.type === "section") {
@@ -645,42 +706,39 @@ export class GradeSheet {
         });
     }
 
-    static parse_json(x) {
-        return new GradeSheet(JSON.parse(x));
-    }
-
     static store(element, x) {
-        let gs = $(element).data("pa-gradeinfo");
-        if (!gs) {
-            gs = new GradeSheet;
-            gs.element = element;
-            $(element).data("pa-gradeinfo", gs);
+        if (!hasClass(element, "pa-psetinfo")) {
+            throw new Error("bad GradeSheet.store");
         }
-        gs.extend(x, !element.classList.contains("pa-psetinfo-partial"));
+        const gi = GradeSheet.closest(element);
+        gi.assign(x);
         window.$pa.loadgrades.call(element);
     }
 
     static closest(element) {
-        let e = element.closest(".pa-psetinfo"), gi = null;
-        while (e) {
-            let jx = $(e).data("pa-gradeinfo");
-            if (jx) {
-                if (gi) {
-                    gi.extend(jx);
-                } else if (jx instanceof GradeSheet) {
-                    gi = jx;
-                    break;
-                } else {
-                    gi = new GradeSheet(jx);
-                    gi.element = e;
-                    $(e).data("pa-gradeinfo", gi);
-                }
-            }
-            if (gi && !hasClass(e, "pa-psetinfo-partial")) {
-                break;
-            }
-            e = e.parentElement.closest(".pa-psetinfo");
+        element = element.closest(".pa-psetinfo");
+        if (!element) {
+            return null;
         }
+        if (element.pa__gradesheet) {
+            return element.pa__gradesheet;
+        }
+        let gi;
+        if (hasClass(element, "pa-psetinfo-partial")
+            && (gi = GradeSheet.closest(element.parentElement))) {
+            gi = gi.make_child();
+        }
+        gi = gi || new GradeSheet;
+        if (element.hasAttribute("data-pa-gradeinfo")) {
+            try {
+                let x = JSON.parse(element.getAttribute("data-pa-gradeinfo") || "{}");
+                gi.assign(x);
+            } catch (err) {
+            }
+        }
+        Object.defineProperty(element, "pa__gradesheet", {
+            value: gi, configurable: true, writable: true
+        });
         return gi;
     }
 }

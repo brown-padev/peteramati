@@ -3,7 +3,7 @@
 // See LICENSE for open-source distribution terms
 
 import { GradeClass } from "./gc.js";
-import { handle_ui, addClass, removeClass } from "./ui.js";
+import { handle_ui, addClass, removeClass, toggleClass } from "./ui.js";
 import { sprintf, strftime, sec2text } from "./utils.js";
 
 
@@ -18,6 +18,29 @@ function timeout_value(ge, gi) {
         return tov;
     } else {
         return ge.timeout;
+    }
+}
+
+function remove_tmto(ge, tm, makesticky) {
+    if (tm && tm.pa__tmto) {
+        clearTimeout(tm.pa__tmto);
+        delete tm.pa__tmto;
+    }
+    if (tm && tm.pa__tmsticky && !makesticky) {
+        tm.pa__tmsticky.parentElement.remove();
+        delete tm.pa__tmsticky;
+    } else if (tm && !tm.pa__tmsticky && makesticky) {
+        const gsection = tm.closest(".pa-gsection");
+        if (gsection) {
+            const e = document.createElement("div"),
+                tms = document.createElement("div");
+            e.className = "pa-gnote pa-timermark-sticky";
+            e.setAttribute("data-pa-grade", ge.key);
+            tms.className = "pa-timermark-alert";
+            e.appendChild(tms);
+            gsection.parentElement.insertBefore(e, gsection);
+            tm.pa__tmsticky = tms;
+        }
     }
 }
 
@@ -64,30 +87,61 @@ GradeClass.add("timermark", {
     update_show: function (elt, v, opts) {
         const gi = opts.gradesheet;
         if (v == null || v === 0) {
-            elt.innerText = "";
+            elt.textContent = "";
         } else {
-            let t = strftime(timefmt, v);
+            let ch = [strftime(timefmt, v)];
             if (gi && (gi.student_timestamp || 0) > v) {
                 const sts = strftime(timefmt, gi.student_timestamp),
                     delta = gi.student_timestamp - v,
                     timeout = timeout_value(this, gi);
                 if (timeout && delta > timeout + 120) {
-                    t += sprintf(" → %s <strong class=\"overdue\">(%dh%dm later)</strong>", sts, delta / 3600, (delta / 60) % 60);
+                    ch[0] = ch[0].concat(" → ", sts, " ");
+                    const strong = document.createElement("strong");
+                    strong.className = "overdue";
+                    strong.textContent = "(" + sec2text(delta) + " later)";
+                    ch.push(strong);
                 } else {
-                    t += sprintf(" → %s (%dh%dm later)", sts, delta / 3600, (delta / 60) % 60);
+                    ch[0] = ch[0].concat(" → ", sts, " (", sec2text(delta), " later)");
                 }
             }
-            elt.innerHTML = t;
+            elt.replaceChildren(...ch);
         }
         return false;
     },
     mount_edit: function (elt) {
         removeClass(elt, "pa-gradevalue");
-        let t = '<button class="ui js-timermark hidden mr-2" type="button" name="'.concat(this.key, ':b" value="1">Press to start</button>');
+        const but = document.createElement("button");
+        but.type = "button";
+        but.className = "ui js-timermark hidden mr-2";
+        but.name = this.key + ":b";
+        but.value = 1;
+        but.disabled = this.disabled;
+        but.append("Press to start");
+        const fr = new DocumentFragment;
+        fr.append(but);
         if (siteinfo.user.is_pclike) {
-            t = t.concat('<button class="ui js-timermark hidden mr-2" type="button" name="', this.key, ':r" value="0">Reset</button>');
+            const rbut = document.createElement("button");
+            rbut.type = "button";
+            rbut.className = "ui js-timermark hidden mr-2";
+            rbut.name = this.key + ":r";
+            rbut.value = 0;
+            rbut.disabled = this.disabled;
+            rbut.append("Reset");
+            fr.append(rbut);
         }
-        return t.concat('<span class="pa-timermark-result hidden"></span><input type="hidden" class="uich pa-gradevalue" name="', this.key, '">');
+        const sp = document.createElement("span");
+        sp.className = "pa-timermark-result hidden";
+        const gv = document.createElement("input");
+        gv.type = "hidden";
+        gv.className = "uich pa-gradevalue";
+        gv.name = this.key;
+        fr.append(sp, gv);
+        return fr;
+    },
+    unmount: function (elt) {
+        const tm = elt.querySelector(".pa-timermark-result");
+        remove_tmto(this, tm, false);
+        elt.remove();
     },
     update_edit: function (elt, v, opts) {
         const gi = opts.gradesheet;
@@ -97,23 +151,26 @@ GradeClass.add("timermark", {
         });
         const tm = elt.querySelector(".pa-timermark-result");
         tm.classList.toggle("hidden", !v && !timeout);
-        const ve = elt.querySelector(".pa-gradevalue"),
-            to = $(ve).data("pa-timermark-interval");
-        to && clearInterval(to);
+        remove_tmto(this, tm, true);
+        let t = strftime(timefmt, v);
         if (v
             && timeout
-            && v + timeout > +document.body.getAttribute("data-now")) {
-            timermark_interval(this, tm, v, timeout);
-            $(ve).data("pa-timermark-interval", setInterval(timermark_interval, 15000, this, tm, v, timeout));
+            && v + timeout + 600 > +document.body.getAttribute("data-now")) {
+            const arg = {
+                deadline: v + timeout + +document.body.getAttribute("data-time-skew"),
+                start_at_text: t,
+                timeout: timeout,
+                tmelt: tm,
+                stelt: tm.pa__tmsticky
+            };
+            timermark_interval(arg);
         } else if (v) {
-            let t = strftime(timefmt, v);
             if (gi && (gi.student_timestamp || 0) > v) {
-                const delta = gi.student_timestamp - v;
-                t += sprintf(" (updated %dh%dm later at %s)", delta / 3600, (delta / 60) % 60, strftime(timefmt, gi.student_timestamp));
+                t = t.concat(" (updated ", sec2text(gi.student_timestamp - v), " later at ", strftime(timefmt, gi.student_timestamp));
             }
-            tm.innerHTML = t;
+            tm.textContent = t;
         } else if (timeout) {
-            tm.innerHTML = "Time once started: " + sec2text(timeout);
+            tm.textContent = "Time once started: " + sec2text(timeout);
         }
     },
     justify: "left",
@@ -128,14 +185,53 @@ handle_ui.on("js-timermark", function () {
     $(elt).trigger("change");
 });
 
-function timermark_interval(ge, tm, gv, timeout) {
-    const delta = +document.body.getAttribute("data-time-skew"),
-        left = gv + timeout - new Date().getTime() / 1000 + delta;
-    let t = strftime(timefmt, gv);
-    if (left > 360) {
-        t = t.concat(" (", sec2text(left), " left)");
-    } else if (left > 0) {
-        t = t.concat(" <strong class=\"overdue\">(", sec2text(left), " left)</strong>");
+function timermark_interval(arg) {
+    const now = new Date().getTime(),
+        dt = Math.round(arg.deadline - now / 1000);
+
+    const tmch = [arg.start_at_text];
+    if (dt > 630) {
+        tmch[0] = tmch[0].concat(" (", sec2text(Math.ceil(dt / 60) * 60), " left)");
+    } else if (dt > 300) {
+        tmch[0] = tmch[0].concat(" (", sec2text(dt), " left)");
+    } else if (dt >= -599) {
+        const e = document.createElement("strong");
+        e.className = "overdue";
+        e.textContent = "(".concat(sec2text(Math.abs(dt)), dt < 0 ? " over)" : " left)");
+        tmch[0] += " ";
+        tmch.push(e);
+    } else {
+        tmch[0] = tmch[0].concat(" (", sec2text(-Math.ceil(dt / 60) * 60), " over)");
     }
-    tm.innerHTML = t;
+    arg.tmelt.replaceChildren(...tmch);
+
+    if (arg.stelt) {
+        let t;
+        if (dt > 630) {
+            t = sec2text(Math.ceil(dt / 60) * 60) + " left";
+        } else if (dt >= 0) {
+            t = sprintf("%d:%02d left", Math.floor(dt / 60), dt % 60);
+        } else if (dt > -600) {
+            t = sprintf("%d:%02d over", Math.floor(-dt / 60), -dt % 60);
+        } else {
+            t = sec2text(Math.floor(-dt / 60) * 60) + " over";
+        }
+        arg.stelt.replaceChildren(t);
+        toggleClass(arg.stelt, "urgent", dt <= 600 && dt > -900);
+    }
+
+    let nextdt;
+    if (dt > 660 || dt <= -600) {
+        nextdt = Math.floor((dt - 1) / 60) * 60;
+    } else if (dt > 630) {
+        nextdt = 630;
+    } else {
+        nextdt = Math.floor(dt - 0.1);
+    }
+
+    let alarmdelay = (arg.deadline - nextdt) * 1000 - 490 - now;
+    if (alarmdelay <= 0) {
+        alarmdelay += 1000;
+    }
+    arg.tmelt.pa__tmto = setTimeout(timermark_interval, alarmdelay, arg);
 }

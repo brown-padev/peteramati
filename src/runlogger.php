@@ -65,32 +65,34 @@ class RunLogger {
     /** @param string $fn
      * @return int|false */
     static function active_job_at($fn) {
-        if (($f = @fopen($fn, "r"))) {
-            $s = stream_get_contents($f);
-            $runat = false;
-            if (($sp = strpos($s, " ")) > 0) {
-                $w = substr($s, 0, $sp);
-                if (ctype_digit($w)) {
-                    $runat = (int) $w;
-                }
-            }
-            if (flock($f, LOCK_SH | LOCK_NB)) {
-                if ($runat
-                    && strpos($s, "-i") !== false
-                    && str_ends_with($fn, ".pid")) {
-                    @unlink(substr($fn, 0, -4) . ".{$runat}.in");
-                }
-                unlink($fn);
-                flock($f, LOCK_UN);
-                $result = false;
-            } else {
-                $result = $runat ? : 1;
-            }
-            fclose($f);
-            return $result;
-        } else {
+        $f = @fopen($fn, "r");
+        if (!$f) {
             return false;
         }
+        $s = stream_get_contents($f);
+        if (($nl = strpos($s, "\n")) !== false) {
+            $s = substr($s, 0, $nl);
+        }
+        $w = $s;
+        if (($sp = strpos($s, " ")) !== false) {
+            $w = substr($s, 0, $sp);
+        }
+        $runat = ctype_digit($w) ? intval($w) : 0;
+        if (flock($f, LOCK_SH | LOCK_NB)
+            && $s !== "") {
+            if ($runat > 0
+                && strpos($s, "-i") !== false
+                && str_ends_with($fn, ".pid")) {
+                @unlink(substr($fn, 0, -4) . ".{$runat}.in");
+            }
+            unlink($fn);
+            flock($f, LOCK_UN);
+            $result = false;
+        } else {
+            $result = max($runat, 1);
+        }
+        fclose($f);
+        return $result;
     }
 
     /** @return int|false */
@@ -101,6 +103,12 @@ class RunLogger {
 
     function invalidate_active_job() {
         $this->_active_job = null;
+    }
+
+    /** @param int $jobid
+     * @return bool */
+    function job_complete($jobid) {
+        return $jobid !== $this->active_job();
     }
 
     /** @return list<int> */
@@ -122,7 +130,7 @@ class RunLogger {
      * @return \Generator<RunResponse> */
     function completed_responses(RunnerConfig $runner = null, $hash = null) {
         $n = 0;
-        $envts = $runner ? $runner->environment_timestamp() : 0;
+        $envts = $runner ? $runner->rerun_timestamp() : 0;
         foreach ($this->past_jobs() as $t) {
             if ($t > $envts
                 && ($rr = $this->job_response($t))
@@ -154,14 +162,15 @@ class RunLogger {
 
     /** @param int $jobid
      * @param ?int $offset
+     * @param ?int $maxreadsz
      * @return ?RunResponse */
-    function job_response($jobid, $offset = null) {
+    function job_response($jobid, $offset = null, $maxreadsz = null) {
         $logbase = $this->job_prefix($jobid);
         $logfile = "{$logbase}.log";
         if ($offset === null || $offset > 32768) {
-            $readsz = self::FIRSTLINESZ;
+            $readsz = $maxreadsz ?? self::FIRSTLINESZ;
         } else {
-            $readsz = self::FIRSTMAXREADSZ;
+            $readsz = $maxreadsz ?? self::FIRSTMAXREADSZ;
         }
         $s = @file_get_contents($logfile, false, null, 0, $readsz);
 
@@ -181,7 +190,7 @@ class RunLogger {
         $rr = RunResponse::make_log($j);
         $rr->ok = true;
         $rr->timestamp = $jobid;
-        $rr->done = $this->active_job() !== $jobid;
+        $rr->done = $this->job_complete($jobid);
 
         if ($offset !== null) {
             if (strlen($s) < $readsz || $offset <= 0) {

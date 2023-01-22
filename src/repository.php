@@ -15,7 +15,7 @@ class Repository {
     public $reposite;
     /** @var string */
     public $cacheid;
-    /** @var int */
+    /** @var -1|0|1 */
     public $open;
     /** @var int */
     public $opencheckat;
@@ -25,11 +25,8 @@ class Repository {
     public $snapat;
     /** @var int */
     public $snapcheckat;
-    public $working;
     /** @var int */
-    public $snapcommitat;
-    /** @var ?string */
-    public $snapcommitline;
+    public $working;
     /** @var int */
     public $infosnapat;
     public $notes;
@@ -49,9 +46,9 @@ class Repository {
     /** @var array<string,array<string,CommitRecord>> */
     private $_commit_lists = [];
     /** @var ?list<string> */
-    private $_remaining_heads;
-    /** @var ?list<string> */
-    private $_snapshot_heads = null;
+    private $_branches;
+    /** @var int */
+    private $_heads_loaded = 0;
     /** @var array<string,bool> */
     private $_commit_lists_cc = [];
     /** @var int */
@@ -78,7 +75,6 @@ class Repository {
         }
         $this->snapcheckat = (int) $this->snapcheckat;
         $this->working = (int) $this->working;
-        $this->snapcommitat = (int) $this->snapcommitat;
         $this->infosnapat = (int) $this->infosnapat;
         if ($this->notes !== null) {
             $this->notes = json_decode($this->notes, true);
@@ -135,14 +131,17 @@ class Repository {
     function https_url() {
         return $this->reposite->https_url();
     }
+
     /** @return string */
     function ssh_url() {
         return $this->reposite->ssh_url();
     }
+
     /** @return string */
     function friendly_url() {
         return $this->reposite->friendly_url();
     }
+
     /** @return string */
     function friendly_url_like(Repository $other) {
         if ($this->reposite->siteclass === $other->reposite->siteclass) {
@@ -150,6 +149,11 @@ class Repository {
         } else {
             return $this->url;
         }
+    }
+
+    /** @return list<string> */
+    function credentialed_git_command() {
+        return $this->reposite->credentialed_git_command();
     }
 
     function expand_message($name, Contact $user) {
@@ -174,7 +178,8 @@ class Repository {
             $this->reposite->gitfetch($this->repoid, $this->cacheid, $foreground);
             if ($foreground) {
                 $this->_commits = $this->_commit_lists = $this->_commit_lists_cc = [];
-                $this->_remaining_heads = $this->_snapshot_heads = null;
+                $this->_branches = null;
+                $this->_heads_loaded = 0;
                 ++$this->_refresh_count;
             }
         } else {
@@ -182,23 +187,30 @@ class Repository {
         }
     }
 
+    /** @var array<string,-1|0|1> */
     static private $open_cache = [];
-    function validate_open(MessageSet $ms = null) {
-        if (isset(self::$open_cache[$this->url]))
+
+    /** @return -1|0|1 */
+    function validate_open() {
+        if (isset(self::$open_cache[$this->url])) {
             return self::$open_cache[$this->url];
-        if (self::$validate_time_used >= self::VALIDATE_TOTAL_TIMEOUT)
+        }
+        if (self::$validate_time_used >= self::VALIDATE_TOTAL_TIMEOUT) {
             return -1;
+        }
         $before = microtime(true);
         self::$open_cache[$this->url] = $r = $this->reposite->validate_open();
         self::$validate_time_used += microtime(true) - $before;
         return $r;
     }
-    function check_open(MessageSet $ms = null) {
+
+    /** @return -1|0|1 */
+    function check_open() {
         // Recheck repository openness after a day for closed repositories,
         // and after 30 seconds for open or failed-check repositories.
         if (Conf::$now - $this->opencheckat > ($this->open == 0 ? 86400 : 30)) {
-            $open = $this->validate_open($ms);
-            if ($open != $this->open || Conf::$now != $this->opencheckat) {
+            $open = $this->validate_open();
+            if ($open !== $this->open || Conf::$now !== $this->opencheckat) {
                 if ($this->repoid > 0)
                     $this->conf->qe("update Repository set `open`=?, opencheckat=? where repoid=?",
                         $open, Conf::$now, $this->repoid);
@@ -206,51 +218,57 @@ class Repository {
                 $this->opencheckat = Conf::$now;
             }
         }
-        if ($this->open < 0 && $ms && $ms->user->isPC && !$ms->has_problem()) {
-            $ms->warning_at("open", Messages::$main->expand_html("repo_toopublic_timeout", $this->reposite->message_defs($ms->user)));
-        }
-        if ($this->open > 0 && $ms && !$ms->has_problem()) {
-            $ms->error_at("open", Messages::$main->expand_html("repo_toopublic", $this->reposite->message_defs($ms->user)));
-        }
         return $this->open;
     }
 
+    /** @var array<string,-1|0|1> */
     static private $working_cache = [];
-    function validate_working(MessageSet $ms = null) {
+
+    /** @return -1|0|1 */
+    function validate_working(Contact $user, MessageSet $ms = null) {
         if (isset(self::$working_cache[$this->url])) {
             return self::$working_cache[$this->url];
         } else if (self::$validate_time_used >= self::VALIDATE_TOTAL_TIMEOUT) {
             return -1;
         }
         $before = microtime(true);
-        self::$working_cache[$this->url] = $r = $this->reposite->validate_working($ms);
+        self::$working_cache[$this->url] = $r = $this->reposite->validate_working($user, $ms);
         self::$validate_time_used += microtime(true) - $before;
         return $r;
     }
-    function check_working(MessageSet $ms = null) {
+
+    /** @return bool */
+    function check_working(Contact $user, MessageSet $ms = null) {
         $working = $this->working;
-        if ($working == 0) {
-            $working = $this->validate_working($ms);
+        if ($working === 0) {
+            $working = $this->validate_working($user, $ms);
             if ($working > 0) {
                 $this->working = Conf::$now;
-                if ($this->repoid > 0)
+                if ($this->repoid > 0) {
                     $this->conf->qe("update Repository set working=? where repoid=?", Conf::$now, $this->repoid);
+                }
             }
         }
-        if ($working < 0 && $ms && $ms->user->isPC && !$ms->has_problem_at("working")) {
-            $ms->warning_at("working", Messages::$main->expand_html("repo_working_timeout", $this->reposite->message_defs($ms->user)));
+        if ($working < 0 && $ms && $user->isPC && !$ms->has_problem_at("working")) {
+            $ms->warning_at("repo", Messages::$main->expand_html("repo_working_timeout", $this->reposite->message_defs($user)));
+            $ms->warning_at("working");
         }
-        if ($working == 0 && $ms && !$ms->has_problem_at("working")) {
-            $ms->error_at("working", Messages::$main->expand_html("repo_unreadable", $this->reposite->message_defs($ms->user)));
+        if ($working === 0 && $ms && !$ms->has_problem_at("working")) {
+            $ms->warning_at("repo", Messages::$main->expand_html("repo_unreadable", $this->reposite->message_defs($user)));
+            $ms->warning_at("working");
         }
         return $working > 0;
     }
 
+    /** @return -1|0|1 */
     function validate_ownership(Contact $user, Contact $partner = null, MessageSet $ms = null) {
         return $this->reposite->validate_ownership($this, $user, $partner, $ms);
     }
+
+    /** @return -1|0|1 */
     function check_ownership(Contact $user, Contact $partner = null, MessageSet $ms = null) {
-        list($when, $ownership) = [0, -1];
+        $when = 0;
+        $ownership = -1;
         $always = $this->reposite->validate_ownership_always();
         if ($this->notes && isset($this->notes["owner." . $user->contactId])) {
             list($when, $ownership) = $this->notes["owner." . $user->contactId];
@@ -269,8 +287,9 @@ class Repository {
                     "update Repository set notes=?{desired} where notes?{expected}e and repoid=?", [$this->repoid]);
             }
         }
-        if ($ownership == 0 && $ms && !$ms->has_problem_at("ownership")) {
-            $ms->warning_at("ownership", $this->expand_message("repo_notowner", $ms->user));
+        if ($ownership === 0 && $ms && !$ms->has_problem_at("ownership")) {
+            $ms->warning_at("repo", $this->expand_message("repo_notowner", $user));
+            $ms->warning_at("ownership");
         }
         return $ownership;
     }
@@ -294,44 +313,66 @@ class Repository {
         return $repodir;
     }
 
-    function gitrun($command, $want_stderr = false) {
-        $command = str_replace("%REPO%", "repo" . $this->repoid, $command);
-        if (!($repodir = $this->ensure_repodir())) {
-            throw new Error("cannot safely create repository directory");
+    /** @return string */
+    function reponame() {
+        return "repo{$this->repoid}";
+    }
+
+    /** @param string $branch
+     * @return string */
+    function repobranchname($branch) {
+        return "repo{$this->repoid}/{$branch}";
+    }
+
+    /** @param list<string> $command
+     * @param array{firstline?:int,linecount?:int,cwd?:?string} $args
+     * @return Subprocess */
+    function gitruninfo($command, $args = []) {
+        if ($command[0] === "git") {
+            $command[0] = $this->conf->opt("gitCommand") ?? "git";
         }
-        $descriptors = [["file", "/dev/null", "r"], ["pipe", "w"], ["pipe", "w"]];
-        $proc = proc_open($command, $descriptors, $pipes, $repodir);
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
-        $stdout = $stderr = "";
-        while (!feof($pipes[1]) || !feof($pipes[2])) {
-            $x = fread($pipes[1], 32768);
-            $y = fread($pipes[2], 32768);
-            $stdout .= $x;
-            $stderr .= $y;
-            if ($x === false || $y === false) {
-                break;
+        $cwd = $args["cwd"] ?? $this->ensure_repodir();
+        if (!$cwd) {
+            throw new Error("Cannot safely create repository directory");
+        }
+        return Subprocess::run($command, $cwd, $args);
+    }
+
+    /** @param list<string> $command
+     * @param array{firstline?:int,linecount?:int,cwd?:?string} $args
+     * @return string */
+    function gitrun($command, $args = []) {
+        return $this->gitruninfo($command, $args)->stdout;
+    }
+
+    /** @param list<string> $command
+     * @param array{firstline?:int,linecount?:int,cwd?:?string} $args
+     * @return bool */
+    function gitrunok($command, $args = []) {
+        return $this->gitruninfo($command, $args)->ok;
+    }
+
+    /** @return list<string> */
+    function branches() {
+        if ($this->_branches === null) {
+            $this->_branches = [];
+            $dir = $this->ensure_repodir() . "/.git/refs/remotes/repo{$this->repoid}/";
+            foreach (glob("{$dir}*") as $x) {
+                $br = substr($x, strlen($dir));
+                if ($br !== "" && $br[0] !== "." && $br !== "HEAD") {
+                    $this->_branches[] = $br;
+                }
             }
-            $r = [$pipes[1], $pipes[2]];
-            $w = $e = [];
-            stream_select($r, $w, $e, 5);
         }
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        $status = proc_close($proc);
-        if (!$want_stderr) {
-            return $stdout;
-        } else {
-            return (object) ["stdout" => $stdout, "stderr" => $stderr, "status" => $status];
-        }
+        return $this->_branches;
     }
 
     /** @param string $arg
      * @return ?string */
     private function rev_parse($arg) {
-        $x = $this->gitrun("git rev-parse --verify " . escapeshellarg($arg), true);
-        if ($x->status == 0 && $x->stdout) {
-            return trim($x->stdout);
+        $grr = $this->gitruninfo(["git", "rev-parse", "--verify", $arg]);
+        if ($grr->ok && $grr->stdout) {
+            return trim($grr->stdout);
         } else {
             return null;
         }
@@ -371,7 +412,7 @@ class Repository {
     /** @param array<string,CommitRecord> &$list
      * @param string $head */
     private function load_trivial_merges_from_head(&$list, $head) {
-        $s = $this->gitrun("git log --cc --name-only --format='%x00%H' " . escapeshellarg($head));
+        $s = $this->gitrun(["git", "log", "--cc", "--name-only", "--format=%x00%H", $head]);
         $p = 0;
         $l = strlen($s);
         $cr = $newcr = null;
@@ -397,7 +438,7 @@ class Repository {
      * @return list<string> */
     private function heads_on($branch) {
         $heads = explode(" ", $this->heads ?? "");
-        $heads[0] = "%REPO%/$branch";
+        $heads[0] = $this->repobranchname($branch);
         return $heads;
     }
 
@@ -421,10 +462,10 @@ class Repository {
         }
 
         // read log
-        $s = $this->gitrun("git log -m --name-only --format='%x00%ct %H %s%n%P' " . escapeshellarg($head));
+        $s = $this->gitrun(["git", "log", "-m", "--name-only", "--format=%x00%ct %H %s%n%P", $head]);
         if ($s === "" && !$this->_refresh_count) {
             $this->refresh(30, true);
-            $s = $this->gitrun("git log -m --name-only --format='%x00%ct %H %s%n%P' " . escapeshellarg($head));
+            $s = $this->gitrun(["git", "log", "-m", "--name-only", "--format=%x00%ct %H %s%n%P", $head]);
         }
 
         // parse log
@@ -487,13 +528,13 @@ class Repository {
             || ($this->_truncated_psetdir[$pset->psetid] ?? false)) {
             // simplest case: just this branch
             if (!$expanded || strlen($this->heads ?? "") <= 40) {
-                return $this->head_commits($branch, "%REPO%/{$branch}");
+                return $this->head_commits($branch, $this->repobranchname($branch));
             }
 
             // expand branch with heads
             $key = ".x/{$branch}";
             if (!isset($this->_commit_lists[$key])) {
-                $list = $this->head_commits($branch, "%REPO%/{$branch}");
+                $list = $this->head_commits($branch, $this->repobranchname($branch));
                 foreach ($this->extra_heads() as $xhead) {
                     $list = $list + $this->head_commits(".h/{$xhead}", $xhead);
                 }
@@ -517,7 +558,7 @@ class Repository {
             if (empty($list)
                 && isset($pset->test_file)
                 && ($this->_truncated_psetdir[$pset->psetid] =
-                    !!$this->ls_files("%REPO%/{$branch}", $pset->test_file))) {
+                    !!$this->ls_files($this->repobranchname($branch), $pset->test_file))) {
                 return $this->commits(null, $branch, $expanded);
             }
             $this->_commit_lists[$key] = $list;
@@ -543,7 +584,7 @@ class Repository {
         foreach ($this->commits($pset, $branch) as $c) {
             if ($c->_is_merge && !$trivial_merges_known) {
                 $cx = $this->commits(null, $branch);
-                $this->load_trivial_merges_from_head($cx, "%REPO%/$branch");
+                $this->load_trivial_merges_from_head($cx, $this->repobranchname($branch));
                 $trivial_merges_known = $this->_commit_lists_cc[$branch] = true;
             }
             if (!$c->_is_trivial_merge) {
@@ -590,75 +631,67 @@ class Repository {
         if (empty($this->_commits)) {
             $this->commits($pset, $branch);
         }
-        // check existing commits
-        list($cx, $found) = self::find_listed_commit($hashpart, $this->_commits);
-        if ($found) {
-            return $cx;
+        // exact commits don’t need access to full commit lists
+        $exact = strlen($hashpart) >= 40;
+        if (array_key_exists($hashpart, $this->_commits)) {
+            return $this->_commits[$hashpart];
         }
-        // load additional cached heads (e.g. student `push -f`)
-        foreach ($this->extra_heads() as $xhead) {
-            if (!isset($this->_commit_lists[".h/$xhead"])) {
-                list($cx, $found) = self::find_listed_commit($hashpart, $this->head_commits(".h/{$xhead}", $xhead));
-                if ($found) {
-                    return $cx;
-                }
+        // branch heads
+        if ($this->_heads_loaded === 0) {
+            $this->_heads_loaded = 1;
+            foreach ($this->branches() as $br) {
+                if (!isset($this->_commit_lists[$br]))
+                    $this->head_commits($br, $this->repobranchname($br));
+            }
+            if (array_key_exists($hashpart, $this->_commits)) {
+                return $this->_commits[$hashpart];
             }
         }
-        // load all branches
-        if ($this->_remaining_heads === null) {
-            $this->_remaining_heads = [$this->conf->default_main_branch];
-            $dir = $this->ensure_repodir() . "/.git/refs/remotes/repo{$this->repoid}/";
-            foreach (glob("{$dir}*") as $x) {
-                $this->_remaining_heads[] = substr($x, strlen($dir));
+        // extra heads (e.g., student does `git push -f`)
+        if ($this->_heads_loaded === 1) {
+            $this->_heads_loaded = 2;
+            foreach ($this->extra_heads() as $x) {
+                if (!isset($this->_commits[$x]))
+                    $this->head_commits(".h/{$x}", $x);
+            }
+            if (array_key_exists($hashpart, $this->_commits)) {
+                return $this->_commits[$hashpart];
             }
         }
-        while (!empty($this->_remaining_heads)) {
-            $h = array_shift($this->_remaining_heads);
-            if (!isset($this->_commit_lists[$h])) {
-                list($cx, $found) = self::find_listed_commit($hashpart, $this->head_commits($h, "%REPO%/$h"));
-                if ($found) {
-                    return $cx;
-                }
-            }
-        }
-        // check snapshots
-        if ($this->_snapshot_heads === null) {
+        // snapshots
+        if ($this->_heads_loaded === 2) {
+            $this->_heads_loaded = 3;
             $pfx = $this->ensure_repodir() . "/.git/refs/tags/repo{$this->repoid}.snap";
-            $this->_snapshot_heads = [];
             foreach (glob("{$pfx}*") as $snapfile) {
-                $time = substr($snapfile, strlen($pfx));
-                if (strlen($time) === 15
-                    && ctype_digit(substr($time, 0, 8))
-                    && $time[8] === "."
-                    && ctype_digit(substr($time, 9))
-                    && ($x = file_get_contents($snapfile)) !== false
+                if (($x = file_get_contents($snapfile)) !== false
                     && ($x = rtrim($x)) !== ""
                     && strlen($x) >= 40
                     && ctype_xdigit($x)
                     && !isset($this->_commits[$x])) {
-                    $this->_snapshot_heads[] = $x;
+                    $this->head_commits(".h/{$x}", $x);
                 }
             }
         }
-        while (!empty($this->_snapshot_heads)) {
-            $head = array_pop($this->_snapshot_heads);
-            list($cx, $found) = self::find_listed_commit($hashpart, $this->head_commits(".h/{$head}", $head));
-            if ($found) {
-                return $cx;
-            }
-        }
-        // nowhere else to look
+        // nothing left to load
         if (!array_key_exists($hashpart, $this->_commits)) {
-            $this->_commits[$hashpart] = null;
+            list($this->_commits[$hashpart], $exact) = self::find_listed_commit($hashpart, $this->_commits);
         }
         return $this->_commits[$hashpart];
     }
 
+    /** @param ?string $branch
+     * @param ?int $limit
+     * @return array<string,string> */
     function author_emails($branch = null, $limit = null) {
-        $limit = $limit ? " -n$limit" : "";
+        $command = ["git", "log", "--format=%ae"];
+        if ($limit) {
+            $command[] = "-n{$limit}";
+        }
+        $argpos = count($command);
         $users = [];
         foreach ($this->heads_on($branch ?? $this->conf->default_main_branch) as $h) {
-            $result = $this->gitrun("git log$limit --format=%ae " . escapeshellarg($h));
+            $command[$argpos] = $h;
+            $result = $this->gitrun($command);
             foreach (explode("\n", $result) as $line) {
                 if ($line !== "")
                     $users[strtolower($line)] = $line;
@@ -667,22 +700,43 @@ class Repository {
         return $users;
     }
 
-    function ls_files($tree, $files = []) {
-        if (is_string($files)) {
-            $files = array($files);
-        }
-        $suffix = "";
+    /** @param string $tree
+     * @param string ...$files
+     * @return GitTreeListInfo */
+    function ls_files_info($tree, ...$files) {
+        $command = ["git", "ls-tree", "-r", "-z", $tree];
         foreach ($files as $f) {
-            $suffix .= " " . escapeshellarg(preg_replace(',/+\z,', '', $f));
+            if ($f !== "") {
+                $command[] = preg_replace('/\/+\z/', "", $f);
+            }
         }
-        $result = $this->gitrun("git ls-tree -r --name-only " . escapeshellarg($tree) . $suffix);
-        $x = explode("\n", $result);
-        if (!empty($x) && $x[count($x) - 1] == "") {
-            array_pop($x);
+        $gr = $this->gitruninfo($command);
+        $gtl = new GitTreeListInfo;
+        $gtl->stderr = $gr->stderr;
+        $gtl->status = $gr->status;
+        $gtl->ok = $gr->ok;
+        foreach (explode("\0", $gr->stdout) as $line) {
+            if ($line !== ""
+                && ($tab = strpos($line, "\t")) !== false
+                && ($sp = strpos($line, " ")) !== false
+                && substr_compare($line, " blob ", $sp, 6) === 0) {
+                $gtl->modes[] = intval(substr($line, 0, $sp), 8);
+                $gtl->names[] = substr($line, $sp + 6, $tab - $sp - 6);
+                $gtl->paths[] = substr($line, $tab + 1);
+            }
         }
-        return $x;
+        return $gtl;
     }
 
+    /** @param string $tree
+     * @param string ...$files
+     * @return list<string> */
+    function ls_files($tree, ...$files) {
+        $gtl = $this->ls_files_info($tree, ...$files);
+        return $gtl->ok ? $gtl->paths : [];
+    }
+
+    /** @return bool */
     function update_info() {
         if ($this->infosnapat < $this->snapat) {
             $qstager = Dbl::make_multi_query_stager($this->conf->dblink, Dbl::F_ERROR);
@@ -694,8 +748,8 @@ class Repository {
             }
             Dbl::free($result);
             $qstager("update Repository set infosnapat=greatest(infosnapat,?) where repoid=?",
-                     [$this->snapat, $this->repoid]);
-            $qstager(true);
+                     $this->snapat, $this->repoid);
+            $qstager(null);
             return true;
         } else {
             return false;
@@ -703,45 +757,76 @@ class Repository {
     }
 
 
-    private function _temp_repo_clone() {
-        assert(isset($this->repoid) && isset($this->cacheid));
-        $suffix = "";
-        $suffixn = 0;
+    /** @return ?string */
+    static private function _temp_repodir() {
+        $root = SiteLoader::$root;
+        $n = 0;
         while (true) {
-            $d = SiteLoader::$root . "/repo/tmprepo." . Conf::$now . $suffix;
-            if (mkdir($d, 0770)) {
+            $rand = mt_rand(100000000, 999999999);
+            $tmpdir = "{$root}/repo/tmprepo.{$rand}";
+            if (@mkdir($tmpdir, 0770)) {
                 break;
+            } else if (++$n > 20) {
+                error_log("Cannot create temporary repository directory");
+                return null;
             }
-            ++$suffixn;
-            $suffix = "_" . $suffixn;
         }
-        chmod($d, 02770);
-        $answer = shell_exec("cd $d && git init -b main >/dev/null && git remote add origin " . SiteLoader::$root . "/repo/repo{$this->cacheid} >/dev/null && echo yes");
-        return ($answer === "yes\n" ? $d : null);
+        chmod($tmpdir, 02770);
+        register_shutdown_function("rm_rf_tempdir", $tmpdir);
+        return Subprocess::runok(["git", "init", "-b", "main"], $tmpdir)
+            ? $tmpdir : null;
     }
 
     /** @param string $hash
      * @return ?string */
     private function prepare_truncated_hash(Pset $pset, $hash) {
-        $pset_files = $this->ls_files($hash, $pset->directory_noslash);
-        foreach ($pset_files as &$f) {
-            $f = escapeshellarg(substr($f, strlen($pset->directory_slash)));
-        }
-        unset($f);
-
-        if (!($trepo = $this->_temp_repo_clone())) {
+        $tmpdir = self::_temp_repodir();
+        if (!$tmpdir) {
             return null;
         }
-        $psetdir_arg = escapeshellarg($pset->directory_slash);
-        $trepo_arg = escapeshellarg($trepo);
-        foreach ($pset_files as $f) {
-            $this->gitrun("mkdir -p \"`dirname {$trepo_arg}/{$f}`\" && git show {$hash}:{$psetdir_arg}{$f} > {$trepo_arg}/{$f}");
+
+        $subdirs = [];
+        $addcommand = ["git", "add"];
+        $gtl = $this->ls_files_info($hash, $pset->directory_noslash);
+        for ($i = 0; $i !== count($gtl->paths); ++$i) {
+            $gr = $this->gitruninfo(["git", "cat-file", "blob", $gtl->names[$i]]);
+            if (!$gr->ok) {
+                return null;
+            }
+
+            $f = substr($gtl->paths[$i], strlen($pset->directory_slash));
+            if (($slash = strrpos($f, "/")) !== false) {
+                $subdir = substr($f, 0, $slash);
+                if (!isset($subdirs[$subdir])
+                    && !@mkdir("{$tmpdir}/{$subdir}", 0770, true)) {
+                    return null;
+                }
+                $subdirs[$subdir] = true;
+            }
+
+            if ($gtl->modes[$i] === GitTreeListInfo::MODE_LINK) {
+                $ok = @symlink($gr->stdout, "{$tmpdir}/{$f}");
+            } else {
+                $ok = @file_put_contents("{$tmpdir}/{$f}", $gr->stdout) === strlen($gr->stdout);
+                if ($ok) {
+                    chmod("{$tmpdir}/{$f}", $gtl->modes[$i] & 0777);
+                }
+            }
+            if (!$ok) {
+                return null;
+            }
+
+            $addcommand[] = $f;
         }
 
-        shell_exec("cd $trepo_arg && git add " . join(" ", $pset_files) . " && git commit -m 'Truncated version of $hash'");
-        shell_exec("cd $trepo_arg && git push -f origin master:refs/tags/truncated_$hash");
-        shell_exec("rm -rf $trepo");
-        return $this->rev_parse("truncated_{$hash}");
+        $repodir = SiteLoader::$root . "/repo/repo{$this->cacheid}";
+        if (!$this->gitrunok($addcommand, ["cwd" => $tmpdir])
+            || !$this->gitrunok(["git", "commit", "-m", "Truncated version of {$hash} for pset {$pset->key}"], ["cwd" => $tmpdir])
+            || !$this->gitrunok(["git", "push", "-f", $repodir, "main:refs/tags/trunc{$pset->id}_{$hash}"], ["cwd" => $tmpdir])) {
+            return null;
+        }
+
+        return $this->rev_parse("trunc{$pset->id}_{$hash}");
     }
 
     /** @param string $refname
@@ -755,11 +840,8 @@ class Repository {
             return null;
         }
         if (!array_key_exists($hash, $this->_truncated_hashes)) {
-            $truncated_hash = $this->rev_parse("truncated_{$hash}");
-            if (!$truncated_hash) {
-                $truncated_hash = $this->prepare_truncated_hash($pset, $hash);
-            }
-            $this->_truncated_hashes[$hash] = $truncated_hash;
+            $this->_truncated_hashes[$hash] = $this->rev_parse("trunc{$pset->key}_{$hash}")
+                ?? $this->prepare_truncated_hash($pset, $hash);
         }
         return $this->_truncated_hashes[$hash];
     }
@@ -784,11 +866,11 @@ class Repository {
     }
 
     /** @param array<string,DiffInfo> $diffargs
-     * @param string $diffoptions */
-    private function parse_diff($diffargs, Pset $pset, $hasha_arg, $hashb_arg, $diffoptions = "") {
-        $command = "git diff{$diffoptions} {$hasha_arg} {$hashb_arg} --";
+     * @param list<string> $diffoptions */
+    private function parse_diff($diffargs, Pset $pset, $hasha, $hashb, $diffoptions) {
+        $command = array_merge(["git", "diff"], $diffoptions, [$hasha, $hashb, "--"]);
         foreach ($diffargs as $fn => $dix) {
-            $command .= " " . escapeshellarg(quotemeta($fn));
+            $command[] = $fn;
         }
         $result = $this->gitrun($command);
         $alineno = $blineno = null;
@@ -852,14 +934,11 @@ class Repository {
 
         $repodir = $truncpfx = "";
         if ($pset->directory_noslash !== "") {
-            $psetdir = escapeshellarg($pset->directory_noslash);
             if ($this->truncated_psetdir($pset)) {
                 $truncpfx = $pset->directory_noslash . "/";
             } else {
-                $repodir = $psetdir . "/";
+                $repodir = $pset->directory_noslash . "/";
             }
-        } else {
-            $psetdir = null;
         }
 
         $hasha = $commita->hash;
@@ -868,14 +947,12 @@ class Repository {
             && !$pset->is_handout($commitb)) {
             $hasha = $this->truncated_hash($pset, $hasha);
         }
-        $hasha_arg = escapeshellarg($hasha);
         $hashb = $commitb->hash;
         if ($truncpfx
             && $pset->is_handout($commitb)
             && !$pset->is_handout($commita)) {
             $hashb = $this->truncated_hash($pset, $hashb);
         }
-        $hashb_arg = escapeshellarg($hashb);
 
         $ignore_diffconfig = $pset->is_handout($commita) && $pset->is_handout($commitb);
         $no_full = $options["no_full"] ?? false;
@@ -893,7 +970,8 @@ class Repository {
                 if ((!$onlyfiles || ($onlyfiles[$fname] ?? false))
                     && ($diffconfig = $pset->find_diffconfig($fname))
                     && $diffconfig->full) {
-                    $result = $this->gitrun("git show {$hashb_arg}:{$repodir}" . escapeshellarg(substr($fname, strlen($pset->directory_slash))));
+                    $command = ["git", "show", "{$hashb}:{$repodir}" . substr($fname, strlen($pset->directory_slash))];
+                    $result = $this->gitrun($command);
                     $di = new DiffInfo($fname, $diffconfig);
                     $diffs[$di->filename] = $di;
                     foreach (explode("\n", $result) as $idx => $line) {
@@ -904,9 +982,9 @@ class Repository {
             }
         }
 
-        $command = "git diff --name-only {$hasha_arg} {$hashb_arg}";
+        $command = ["git", "diff", "--name-only", $hasha, $hashb];
         if ($pset && !$truncpfx && $pset->directory_noslash) {
-            $command .= " -- " . escapeshellarg($pset->directory_noslash);
+            array_push($command, "--", $pset->directory_noslash);
         }
         $result = $this->gitrun($command);
 
@@ -973,7 +1051,7 @@ class Repository {
             for ($i = 0; $i < $nd; ++$i) {
                 $darg[substr($xdiffs[$i]->filename, strlen($truncpfx))] = $xdiffs[$i];
                 if (count($darg) >= 200 || $i == $nd - 1) {
-                    $this->parse_diff($darg, $pset, $hasha_arg, $hashb_arg, $wdiff ? " -w" : "");
+                    $this->parse_diff($darg, $pset, $hasha, $hashb, $wdiff ? ["-w"] : []);
                     $darg = [];
                 }
             }
@@ -1019,7 +1097,7 @@ class Repository {
             }
         }
 
-        $result = $this->gitrun("git show " . escapeshellarg("{$hash}:{$filename}"));
+        $result = $this->gitrun(["git", "show", "{$hash}:{$filename}"]);
         self::$_file_contents[$n] = [$hash, $filename, explode("\n", $result), 1];
         return self::$_file_contents[$n][2];
     }
@@ -1030,4 +1108,23 @@ class Repository {
     static function validate_branch($branch) {
         return preg_match('/\A(?=[^^:~?*\\[\\\\\\000-\\040\\177]+\z)(?!@\z|.*@\{|[.\/]|.*\/[.\/]|.*[\.\/]\z|.*\.\.|.*\.lock\z|.*\.lock\/)/', $branch);
     }
+}
+
+class GitTreeListInfo {
+    /** @var list<int> */
+    public $modes = [];
+    /** @var list<string> */
+    public $names = [];
+    /** @var list<string> */
+    public $paths = [];
+    /** @var string */
+    public $stderr;
+    /** @var int */
+    public $status;
+    /** @var bool */
+    public $ok;
+
+    const MODE_RW = 0100644;
+    const MODE_RWX = 0100755;
+    const MODE_LINK = 0120000;
 }

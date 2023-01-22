@@ -1,19 +1,22 @@
 <?php
 // runenqueue.php -- Peteramati script for adding to the execution queue
-// HotCRP and Peteramati are Copyright (c) 2006-2021 Eddie Kohler and others
+// HotCRP and Peteramati are Copyright (c) 2006-2022 Eddie Kohler and others
 // See LICENSE for open-source distribution terms
 
-require_once(dirname(__DIR__) . "/src/init.php");
+if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
+    require_once(dirname(__DIR__) . "/src/init.php");
+}
 
-class RunEnqueueBatch {
+
+class RunEnqueue_Batch {
     /** @var Conf */
     public $conf;
     /** @var Pset */
     public $pset;
     /** @var RunnerConfig */
     public $runner;
-    /** @var bool */
-    public $is_ensure = false;
+    /** @var int */
+    public $if_needed = 0;
     /** @var bool */
     public $verbose = false;
     /** @var ?int */
@@ -24,6 +27,8 @@ class RunEnqueueBatch {
     public $runsettings;
     /** @var int */
     public $sset_flags;
+    /** @var bool */
+    public $eventsource = false;
     /** @var list<string> */
     public $usermatch = [];
     /** @var ?string */
@@ -35,19 +40,32 @@ class RunEnqueueBatch {
         $this->pset = $pset;
         $this->runner = $runner;
         $this->sset_flags = 0;
-        if (count($usermatch) === 1 && $usermatch[0] === "dropped") {
+        $umatch = [];
+        foreach ($usermatch as $u) {
+            while (str_ends_with($u, ",")) {
+                $u = substr($u, 0, -1);
+            }
+            if ($u !== "") {
+                $umatch[] = $u;
+            }
+        }
+        if (count($umatch) === 1 && $umatch[0] === "dropped") {
             $this->sset_flags |= StudentSet::DROPPED;
         } else {
             $this->sset_flags |= StudentSet::ENROLLED;
         }
-        if (count($usermatch) === 1 && $usermatch[0] === "college") {
+        if (count($umatch) === 1 && $umatch[0] === "college") {
             $this->sset_flags |= StudentSet::COLLEGE;
-        } else if (count($usermatch) === 1 && $usermatch[0] === "extension") {
+        } else if (count($umatch) === 1 && $umatch[0] === "extension") {
             $this->sset_flags |= StudentSet::DCE;
         }
         if ($this->sset_flags === StudentSet::ENROLLED) {
-            foreach ($usermatch as $s) {
-                $this->usermatch[] = "*{$s}*";
+            foreach ($umatch as $s) {
+                if (str_starts_with($s, "[anon")) {
+                    $this->usermatch[] = preg_replace('/([\[\]])/', '\\\\$1', $s . "*");
+                } else {
+                    $this->usermatch[] = "*{$s}*";
+                }
             }
         }
     }
@@ -94,7 +112,7 @@ class RunEnqueueBatch {
         $sset->set_pset($this->pset);
         $nu = 0;
         $chain = $this->chainid ?? QueueItem::new_chain();
-        $chainstr = $this->chainid ? " C{$this->chainid}" : "";
+        $chainstr = $chain ? " C{$chain}" : "";
         foreach ($sset as $info) {
             if (!$info->repo) {
                 continue;
@@ -111,62 +129,83 @@ class RunEnqueueBatch {
             $qi = QueueItem::make_info($info, $this->runner);
             $qi->chain = $chain > 0 ? $chain : null;
             $qi->runorder = QueueItem::unscheduled_runorder($nu * 10);
-            $qi->flags |= QueueItem::FLAG_UNWATCHED
-                | ($this->is_ensure ? QueueItem::FLAG_ENSURE : 0);
+            $qi->flags |= QueueItem::FLAG_UNWATCHED;
+            if (!$this->eventsource) {
+                $qi->flags |= QueueItem::FLAG_NOEVENTSOURCE;
+            }
+            $qi->ifneeded = $this->if_needed;
             $qi->tags = $this->tags;
             foreach ($this->runsettings ?? [] as $k => $v) {
                 $qi->runsettings[$k] = $v;
             }
-            if (!$this->is_ensure || !$qi->compatible_response()) {
+            if ($this->if_needed === 0
+                || $qi->count_compatible_responses($this->verbose, $this->if_needed) < $this->if_needed) {
                 $qi->enqueue();
                 if (!$qi->chain) {
                     $qi->schedule($nu);
                 }
                 if ($this->verbose) {
-                    fwrite(STDERR, $qi->unparse_key() . ": create{$chainstr}\n");
+                    fwrite(STDERR, "#{$qi->queueid} " . $qi->unparse_key() . ": create{$chainstr}\n");
                 }
                 ++$nu;
             }
         }
         if ($chain > 0
             && ($qi = QueueItem::by_chain($this->conf, $chain))
-            && $qi->status < 0) {
+            && $qi->schedulable()) {
             $qi->schedule(0);
         }
         return $nu;
     }
 
-    /** @return RunEnqueueBatch */
+    /** @return int */
+    function run_or_warn() {
+        $n = $this->run();
+        if ($n === 0) {
+            fwrite(STDERR, "nothing to do\n");
+        }
+        return $n > 0 ? 0 : 1;
+    }
+
+    /** @return RunEnqueue_Batch */
     static function make_args(Conf $conf, $argv) {
         $arg = (new Getopt)->long(
             "p:,pset: Problem set",
             "r:,runner:,run: Runner name",
-            "e,ensure Run only if needed",
-            "u[],user[] Match these users",
+            "e::,if-needed:: {n} =N Run only if needed",
+            "ensure !",
+            "u[]+,user[]+ Match these users",
             "H:,hash:,commit: Use this commit",
             "c:,chain: Set chain ID",
             "t[],tag[] Add tag",
             "s[],setting[] Set NAME=VALUE",
+            "event-source,eventsource Listen for EventSource connections",
             "V,verbose",
             "help"
         )->helpopt("help")->parse($argv);
         if (($arg["p"] ?? "") === "") {
-            throw new Error("missing `--pset`");
+            throw new CommandLineException("missing `--pset`");
         }
         $pset = $conf->pset_by_key($arg["p"]);
         if (!$pset) {
-            throw new Error("no such pset");
+            throw new CommandLineException("no such pset");
         }
         if (($arg["r"] ?? "") === "") {
-            throw new Error("missing `--runner`");
+            throw new CommandLineException("missing `--runner`");
         }
         $runner = $pset->runners[$arg["r"]] ?? null;
         if (!$runner) {
-            throw new Error("no such runner");
+            throw new CommandLineException("no such runner");
         }
-        $self = new RunEnqueueBatch($pset, $runner, $arg["u"] ?? []);
+        $self = new RunEnqueue_Batch($pset, $runner, $arg["u"] ?? []);
         if (isset($arg["e"])) {
-            $self->is_ensure = true;
+            if ($arg["e"] === false) {
+                $self->if_needed = 1;
+            } else {
+                $self->if_needed = $arg["e"];
+            }
+        } else if (isset($arg["ensure"])) {
+            $self->if_needed = 1;
         }
         if (isset($arg["V"])) {
             $self->verbose = true;
@@ -177,13 +216,13 @@ class RunEnqueueBatch {
                 && QueueItem::valid_chain(intval($chain))) {
                 $self->chainid = intval($chain);
             } else {
-                throw new Error("bad `--chain`");
+                throw new CommandLineException("bad `--chain`");
             }
         }
         if (isset($arg["t"])) {
             foreach ($arg["t"] as $tag) {
                 if (!preg_match('/\A' . TAG_REGEX_NOTWIDDLE . '\z/', $tag)) {
-                    throw new Error("bad `--tag`");
+                    throw new CommandLineException("bad `--tag`");
                 }
                 $self->tags[] = $tag;
             }
@@ -191,29 +230,25 @@ class RunEnqueueBatch {
         if (isset($arg["s"])) {
             foreach ($arg["s"] as $setting) {
                 if (!preg_match('/\A([A-Za-z][_A-Za-z0-9]*)=([-._A-Za-z0-9]*)\z/', $setting, $m)) {
-                    throw new Error("bad `--setting`");
+                    throw new CommandLineException("bad `--setting`");
                 }
                 $self->runsettings[$m[1]] = $m[2];
             }
         }
         if (isset($arg["H"])) {
             if (!($hp = CommitRecord::canonicalize_hashpart($arg["H"]))) {
-                throw new Error("bad `--commit`");
+                throw new CommandLineException("bad `--commit`");
             }
             $self->hash = $hp;
+        }
+        if (isset($arg["event-source"])) {
+            $self->eventsource = true;
         }
         return $self;
     }
 }
 
-try {
-    if (RunEnqueueBatch::make_args($Conf, $argv)->run() > 0) {
-        exit(0);
-    } else {
-        fwrite(STDERR, "nothing to do\n");
-        exit(1);
-    }
-} catch (Error $e) {
-    fwrite(STDERR, $e->getMessage() . "\n");
-    exit(1);
+
+if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
+    exit(RunEnqueue_Batch::make_args(Conf::$main, $argv)->run_or_warn());
 }

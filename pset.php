@@ -198,9 +198,14 @@ class PsetRequest {
         }
         $grades = [];
         foreach ($this->pset->grades() as $ge) {
-            if (isset($values[$ge->key])
-                && ($g = $ge->parse_value($values[$ge->key], !$isauto)) !== false) {
-                $grades[$ge->key] = $g;
+            if (isset($values[$ge->key])) {
+                $v = $ge->parse_value($values[$ge->key], !$isauto);
+                if (!($v instanceof GradeError)) {
+                    if ($v === false && $isauto) {
+                        $v = null;
+                    }
+                    $grades[$ge->key] = $v;
+                }
             }
         }
         $updates = [($isauto ? "autogrades" : "grades") => $grades];
@@ -287,12 +292,6 @@ class PsetRequest {
         if ($this->qreq->set_partner) {
             ContactView::set_partner_action($this->user, $this->viewer, $this->qreq);
         }
-        if ($this->qreq->set_repo) {
-            ContactView::set_repo_action($this->user, $this->viewer, $this->qreq);
-        }
-        if ($this->qreq->set_branch) {
-            ContactView::set_branch_action($this->user, $this->viewer, $this->qreq);
-        }
         if ($this->qreq->download) {
             $this->handle_download();
         }
@@ -366,7 +365,8 @@ class PsetRequest {
             if ($snv > 1) {
                 $b[] = Ht::link("←", $this->info->hoturl("pset", ["oldersnv" => 1]), ["class" => "btn need-tooltip", "aria-label" => "Older answers"]);
             }
-            if ($snv !== $this->info->pinsnv()) {
+            if ($snv !== $this->info->pinsnv()
+                && $this->info->pc_view) {
                 $b[] = Ht::button("Ⓖ", ["type" => "submit", "formmethod" => "post", "formaction" => $this->info->hoturl("=pset", ["pinsnv" => 1]), "class" => "btn need-tooltip", "aria-label" => "Mark these answers for grading"]);
             }
             if ($snv < $nv) {
@@ -377,7 +377,7 @@ class PsetRequest {
                     join("", $b), '</div></form>';
             }
         }
-        echo "<h2>", htmlspecialchars($this->pset->title), "</h2>";
+        echo '<h2 class="pset-title">', htmlspecialchars($this->pset->title), "</h2>";
         ContactView::echo_partner_group($this->info);
         ContactView::echo_repo_group($this->info, $this->info->can_edit_grade());
         ContactView::echo_downloads_group($this->info);
@@ -482,7 +482,7 @@ class PsetRequest {
             echo '<div class="pa-gradelist is-main want-pa-landmark-links',
                 $info->can_edit_scores() ? " has-editable-scores" : "",
                 '"></div>';
-            Ht::stash_script('$pa.store_gradeinfo($(".pa-psetinfo")[0],' . json_encode_browser($info->grade_json()) . ');');
+            Ht::stash_script('$pa.gradesheet_store($(".pa-psetinfo")[0],' . json_encode_browser($info->grade_json()) . ');');
             if ($this->pset->has_grade_landmark) {
                 Ht::stash_script('$(function(){$(".pa-psetinfo").each($pa.loadgrades)})');
             }
@@ -490,7 +490,7 @@ class PsetRequest {
         }
 
         $lhd = $info->late_hours_data();
-        if ($lhd && $info->can_view_grade() && !$info->can_edit_scores()) {
+        if ($lhd && $info->can_view_some_grade() && !$info->can_edit_scores()) {
             if (($has_grades
                  && $info->can_view_nonempty_score())
                 || (isset($lhd->hours)
@@ -556,7 +556,7 @@ class PsetRequest {
         }
 
         $notesflag = HASNOTES_ANY;
-        if (!$this->info->pc_view && !$this->info->can_view_score()) {
+        if (!$this->info->pc_view && !$this->info->can_view_any_grade()) {
             $notesflag = HASNOTES_COMMENT;
         }
         $result = $this->conf->qe("select bhash, haslinenotes, hasflags, hasactiveflags
@@ -804,7 +804,7 @@ class PsetRequest {
         echo '"><h3><button type="button" class="btn-qlink ui pa-run-show">',
             '<span class="foldarrow">&#x25B6;</span>',
             htmlspecialchars($runner->display_title), '</button></h3>',
-            '<div class="pa-run pa-run-short hidden" id="pa-run-', $runner->name, '"';
+            '<div class="pa-run pa-run-short need-run hidden" id="pa-run-', $runner->name, '"';
         if ($runner->xterm_js
             || ($runner->xterm_js === null && $info->pset->run_xterm_js)) {
             echo ' data-pa-xterm-js="true"';
@@ -857,7 +857,7 @@ class PsetRequest {
             $this->conf->add_stylesheet("stylesheets/xterm.css");
             $this->conf->add_javascript("scripts/xterm.js");
         }
-        $this->conf->header(htmlspecialchars($this->pset->title), "home");
+        $this->conf->header('<span class="pset-title">' . htmlspecialchars($this->pset->title) . '</span>', "body-pset");
         if ($this->viewer->isPC) {
             $this->echo_session_list_links();
         }

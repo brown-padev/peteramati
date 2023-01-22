@@ -1,6 +1,6 @@
 <?php
 // api/api_flag.php -- Peteramati API for flagging
-// HotCRP and Peteramati are Copyright (c) 2006-2021 Eddie Kohler and others
+// HotCRP and Peteramati are Copyright (c) 2006-2022 Eddie Kohler and others
 // See LICENSE for open-source distribution terms
 
 class Flag_API {
@@ -67,9 +67,9 @@ class Flag_API {
         foreach ($flags as $flag) {
             if (!is_object($flag)
                 || !is_int($flag->uid ?? null)
-                || !is_int($flag->psetid ?? null)
-                || !is_string($flag->commit ?? null)
-                || !ctype_xdigit($flag->commit)
+                || !is_int($flag->pset ?? null)
+                || !is_string($flag->hash ?? $flag->commit ?? null)
+                || !ctype_xdigit($flag->hash ?? $flag->commit)
                 || !is_string($flag->flagid ?? null)) {
                 return ["ok" => false, "error" => "Format error."];
             }
@@ -77,7 +77,7 @@ class Flag_API {
                 || ($u->contactId !== $viewer->contactId && !$viewer->isPC)) {
                 return ["ok" => false, "error" => "Permission error."];
             }
-            if (!($pset = $viewer->conf->pset_by_id($flag->psetid))
+            if (!($pset = $viewer->conf->pset_by_id($flag->pset))
                 || $pset->gitless) {
                 return ["ok" => false, "error" => "Bad psetid."];
             }
@@ -95,7 +95,8 @@ class Flag_API {
                 $errors[] = $flag;
                 continue;
             }
-            $commit = $info->repo->connected_commit($flag->commit, $info->pset);
+            $hash = $flag->hash ?? $flag->commit;
+            $commit = $info->repo->connected_commit($hash, $info->pset);
             if (!$commit) {
                 $flag->error = "Disconnected commit.";
                 $errors[] = $flag;

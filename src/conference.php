@@ -55,8 +55,15 @@ class APIData {
 }
 
 class Conf {
-    /** @var ?mysqli */
+    /** @var ?mysqli
+     * @readonly */
     public $dblink;
+    /** @var string
+     * @readonly */
+    public $dbname;
+    /** @var string
+     * @readonly */
+    public $session_key;
 
     /** @var array<string,int> */
     private $settings;
@@ -69,7 +76,6 @@ class Conf {
     /** @var array|true */
     private $_gsettings_loaded = [];
 
-    public $dbname;
     public $dsn = null;
 
     /** @var string */
@@ -125,6 +131,8 @@ class Conf {
     private $_psets_by_category;
     /** @var array<string,bool> */
     private $_category_has_extra;
+    /** @var array<string,QueueConfig> */
+    private $_queues = [];
 
     /** @var ?list<FormulaConfig> */
     private $_global_formulas;
@@ -145,6 +153,8 @@ class Conf {
     private $_username_cache;
     /** @var ?array<int,string> */
     private $_anon_username_cache;
+    /** @var ?Contact */
+    private $_root_user;
     /** @var ?Contact */
     private $_site_contact;
     /** @var array<string,Repository> */
@@ -178,16 +188,17 @@ class Conf {
 
     const INVALID_TOKEN = "INVALID";
 
-    function __construct($options, $make_dsn) {
+    /** @param array<string,mixed> $options
+     * @param bool $connect */
+    function __construct($options, $connect) {
         // unpack dsn, connect to database, load current settings
-        if ($make_dsn && ($this->dsn = Dbl::make_dsn($options))) {
-            list($this->dblink, $options["dbName"]) = Dbl::connect_dsn($this->dsn);
-        }
-        if (!isset($options["confid"])) {
-            $options["confid"] = $options["dbName"] ?? null;
+        if (($cp = Dbl::parse_connection_params($options))) {
+            $this->dblink = $connect ? $cp->connect() : null;
+            $this->dbname = $cp->name;
+            $this->session_key = "@{$this->dbname}";
         }
         $this->opt = $options;
-        $this->dbname = $options["dbName"];
+        $this->opt["confid"] = $this->opt["confid"] ?? $this->dbname;
         if ($this->dblink && !Dbl::$default_dblink) {
             Dbl::set_default_dblink($this->dblink);
             Dbl::set_error_handler(array($this, "query_error_handler"));
@@ -245,8 +256,7 @@ class Conf {
 
         // update schema
         $this->sversion = $this->settings["allowPaperOption"];
-        if ($this->sversion < 165) {
-            require_once("updateschema.php");
+        if ($this->sversion < 171) {
             $old_nerrors = Dbl::$nerrors;
             (new UpdateSchema($this))->run();
             Dbl::$nerrors = $old_nerrors;
@@ -443,7 +453,7 @@ class Conf {
         $this->_username_cache = $this->_anon_username_cache = null;
         $this->sort_by_last = $sort_by_last;
         $this->default_format = (int) ($this->opt["defaultFormat"] ?? 0);
-        $this->_site_contact = null;
+        $this->_root_user = $this->_site_contact = null;
         $this->_api_map = null;
         $this->_date_format_initialized = false;
         $this->_dtz = null;
@@ -494,6 +504,14 @@ class Conf {
                     $exception->key = $pk;
                     throw $exception;
                 }
+            }
+        }
+
+        // parse queues
+        if (is_object($config->_queues ?? null)) {
+            foreach (get_object_vars($config->_queues) as $qk => $q) {
+                $queue = QueueConfig::make_named($qk, $q);
+                $this->_queues[$queue->key] = $queue;
             }
         }
 
@@ -872,22 +890,26 @@ class Conf {
     }
 
     /** @return Contact */
+    function root_user() {
+        if (!$this->_root_user) {
+            $this->_root_user = Contact::make_site_contact($this, ["email" => "rootuser"]);
+        }
+        return $this->_root_user;
+    }
+
+    /** @return Contact */
     function site_contact() {
         if (!$this->_site_contact) {
-            $args = [
-                "fullName" => $this->opt("contactName"),
-                "email" => $this->opt("contactEmail"),
-                "isChair" => 1, "isPC" => 1, "is_site_contact" => 1,
-                "contactTags" => null
-            ];
-            if ((!$args["email"] || $args["email"] === "you@example.com")
+            $args = ["email" => $this->opt("contactEmail") ?? ""];
+            if (($args["email"] === "" || $args["email"] === "you@example.com")
                 && ($row = $this->default_site_contact())) {
-                unset($args["fullName"]);
                 $args["email"] = $row->email;
                 $args["firstName"] = $row->firstName;
                 $args["lastName"] = $row->lastName;
+            } else if (($name = $this->opt("contactName"))) {
+                list($args["firstName"], $args["lastName"]) = Text::split_name($name);
             }
-            $this->_site_contact = new Contact($args, $this);
+            $this->_site_contact = Contact::make_site_contact($this, $args);
         }
         return $this->_site_contact;
     }
@@ -1115,17 +1137,17 @@ class Conf {
     // session data
 
     function session($name, $defval = null) {
-        if (isset($_SESSION[$this->dsn][$name]))
-            return $_SESSION[$this->dsn][$name];
+        if (isset($_SESSION[$this->session_key][$name]))
+            return $_SESSION[$this->session_key][$name];
         else
             return $defval;
     }
 
     function save_session($name, $value) {
         if ($value !== null)
-            $_SESSION[$this->dsn][$name] = $value;
+            $_SESSION[$this->session_key][$name] = $value;
         else
-            unset($_SESSION[$this->dsn][$name]);
+            unset($_SESSION[$this->session_key][$name]);
     }
 
     function capability_text($prow, $capType) {
@@ -1655,7 +1677,7 @@ class Conf {
                 $t = "~" . $m[2] . ($page === "index" ? "" : "/$t");
                 $param = $m[1] . $m[3];
             }
-            if (in_array($page, ["pset", "run", "diff", "raw", "file"])
+            if (in_array($page, ["pset", "diff", "raw", "file"])
                 && preg_match($are . 'pset=(\w+)' . $zre, $param, $m)) {
                 $t .= "/" . $m[2];
                 $param = $m[1] . $m[3];
@@ -1768,7 +1790,7 @@ class Conf {
         if ($this->_save_msgs) {
             ensure_session();
             foreach ($this->_save_msgs as $m) {
-                $_SESSION[$this->dsn]["msgs"][] = $m;
+                $_SESSION[$this->session_key]["msgs"][] = $m;
             }
             $this->_save_msgs = null;
         }
@@ -2264,6 +2286,14 @@ class Conf {
     }
 
 
+    function clean_queue() {
+        if (($this->settings["__qcleanat"] ?? 0) < Conf::$now - 600) {
+            $this->__save_setting("__qcleanat", Conf::$now);
+            $this->qe("delete from ExecutionQueue where status>=? and updateat<? and runat<?", QueueItem::STATUS_CANCELLED, Conf::$now - 600, Conf::$now - 600);
+        }
+    }
+
+
     function register_pset(Pset $pset) {
         if (isset($this->_psets[$pset->id])) {
             throw new Exception("pset id `{$pset->id}` reused");
@@ -2442,6 +2472,25 @@ class Conf {
     }
 
 
+    /** @param string $name
+     * @return QueueConfig */
+    function queue($name) {
+        $name = $name ?? "";
+        if (($pos = strpos($name, "#")) !== false
+            && ctype_digit(substr($name, $pos + 1))) {
+            $nconcurrent = intval(substr($name, $pos + 1));
+            $name = substr($name, 0, $pos);
+        } else {
+            $nconcurrent = null;
+        }
+        $qc = $this->_queues[$name] ?? $this->_queues["default"] ?? new QueueConfig;
+        if ($nconcurrent !== null) {
+            $qc->nconcurrent = $nconcurrent;
+        }
+        return $qc;
+    }
+
+
     function handout_repo(Pset $pset, Repository $inrepo = null) {
         $url = $pset->handout_repo_url;
         if (!$url) {
@@ -2615,20 +2664,24 @@ class Conf {
 
     function call_api($uf, Contact $user, Qrequest $qreq, APIData $api) {
         if (!$uf) {
-            return ["ok" => false, "error" => "API function not found."];
-        } else if (!($uf->get ?? null) && !$qreq->valid_post()) {
-            return ["ok" => false, "error" => "Missing credentials."];
+            return ["ok" => false, "error" => "API function not found"];
+        } else if ($qreq->method() !== "GET" && $qreq->method() !== "POST") {
+            return ["ok" => false, "error" => "Method not supported"];
+        } else if ($qreq->is_post() && !$qreq->valid_token()) {
+            return ["ok" => false, "error" => "Missing credentials"];
+        } else if (!($uf->get ?? null) && !$qreq->is_post()) {
+            return ["ok" => false, "error" => "Method not supported"];
         }
         $need_hash = !!($uf->hash ?? false);
         $need_repo = !!($uf->repo ?? false);
         $need_pset = $need_repo || $need_hash || !!($uf->pset ?? false);
         $need_user = !!($uf->user ?? false);
         if ($need_user && !$api->user) {
-            return ["ok" => false, "error" => "Missing user."];
+            return ["ok" => false, "error" => "User not found"];
         } else if ($need_pset && !$api->pset) {
-            return ["ok" => false, "error" => "Missing pset."];
+            return ["ok" => false, "error" => "Pset not found"];
         } else if ($need_repo && !$api->repo) {
-            return ["ok" => false, "error" => "Missing repository."];
+            return ["ok" => false, "error" => "Repository not found"];
         } else if ($need_hash) {
             $api->commit = $this->check_api_hash($api->hash, $api);
             if (!$api->commit) {
@@ -2666,6 +2719,8 @@ class Conf {
     private function fill_api_map() {
         $this->_api_map = [
             "blob" => "15 Repo_API::blob",
+            "branch" => "19 RepoConfig_API::branch",
+            "branches" => "1 Repo_API::branches",
             "diffconfig" => "15 Repo_API::diffconfig",
             "filediff" => "15 Repo_API::filediff",
             "flag" => "15 Flag_API::flag",
@@ -2679,19 +2734,25 @@ class Conf {
             "linenotemark" => "3 LineNote_API::linenotemark",
             "multigrade" => "3 Grade_API::multigrade",
             "multiresolveflag" => "0 Flag_API::multiresolve",
-            "repositories" => "17 Repo_API::user_repositories",
+            "psetconfig" => "35 PsetConfig_API::psetconfig",
+            "repo" => "19 RepoConfig_API::repo",
+            "repositories" => "17 RepoConfig_API::user_repositories",
             "runchainhead" => "1 Run_API::runchainhead"
         ];
         if (($olist = $this->opt("apiFunctions"))) {
             expand_json_includes_callback($olist, [$this, "_add_api_json"]);
         }
     }
+    /** @param string $fn
+     * @return bool */
     function has_api($fn) {
         if ($this->_api_map === null) {
             $this->fill_api_map();
         }
         return isset($this->_api_map[$fn]);
     }
+    /** @param string $fn
+     * @return ?object */
     function api($fn) {
         if ($this->_api_map === null) {
             $this->fill_api_map();
@@ -2715,6 +2776,9 @@ class Conf {
             }
             if ($flags & 16) {
                 $uf->user = true;
+            }
+            if ($flags & 32) {
+                $uf->anypset = true;
             }
         }
         return $uf;

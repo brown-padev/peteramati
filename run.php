@@ -22,16 +22,16 @@ class RunRequest {
     /** @var RunnerConfig */
     public $runner;
     /** @var bool */
-    public $is_ensure;
+    public $if_needed;
 
     /** @param string $err
      * @return array */
     static function error($err = null) {
-        return ["ok" => false, "error" => htmlspecialchars($err), "error_text" => $err];
+        return ["ok" => false, "error" => $err];
     }
 
     static function quit($err = null, $js = null) {
-        json_exit(["ok" => false, "error" => htmlspecialchars($err), "error_text" => $err] + ($js ?? []));
+        json_exit(["ok" => false, "error" => $err] + ($js ?? []));
     }
 
     function __construct(Contact $viewer, Qrequest $qreq) {
@@ -44,27 +44,21 @@ class RunRequest {
         }
         assert($this->user === $this->viewer || $this->viewer->isPC);
         $this->pset = ContactView::find_pset_redirect($qreq->pset, $viewer);
-
-        foreach ($this->pset->runners as $r) {
-            if ($qreq->run === $r->name) {
-                $this->runner = $r;
-                $this->is_ensure = !!$qreq->ensure;
-                break;
-            } else if ($qreq->run === "{$r->name}.ensure") {
-                $this->runner = $r;
-                $this->is_ensure = true;
-            }
-        }
+        $this->runner = $this->pset->runner_by_key($qreq->run);
         if (!$this->runner
             || (!$this->viewer->isPC && !$this->runner->visible)) {
             self::quit("No such command.");
         }
+
+        $this->if_needed = str_ends_with($qreq->run, ".ifneeded") || $qreq->ifneeded;
     }
 
     static function go(Contact $user, Qrequest $qreq) {
         $rreq = new RunRequest($user, $qreq);
         if ($qreq->runmany) {
             $rreq->runmany();
+        } else if ($qreq->download) {
+            $rreq->download();
         } else {
             json_exit($rreq->run());
         }
@@ -138,14 +132,16 @@ class RunRequest {
                 return self::error("Unknown queueid {$qreq->queueid}.");
             }
         }
-        if (!$qi && $this->is_ensure) {
+        if (!$qi && $this->if_needed) {
             $qi = QueueItem::for_complete_job($info, $this->runner);
         }
 
         // complain if unrunnable
         if ($this->runner->command
             && (!$info->repo || !$info->commit())) {
-            $qi && $qi->delete(false);
+            if ($qi) {
+                $qi->cancel();
+            }
             if (!$info->repo) {
                 return self::error("No repository.");
             } else if ($qreq->newcommit ?? $qreq->commit) {
@@ -162,22 +158,16 @@ class RunRequest {
                 || $qi->runnername !== $this->runner->name) {
                 return self::error("Wrong runner.");
             }
-            if (!$qi->substantiate(new QueueStatus)) {
-                return self::error($qi->last_error);
-            } else if ($qi->runat) {
+            if ($qi->has_response()) {
                 return $qi->full_response(cvtint($qreq->offset, 0), $qreq->write ?? "", !!$qreq->stop);
             }
         }
 
         // maybe evaluate
         if (!$this->runner->command) {
-            assert(!!$this->runner->evaluate_function);
-            $rr = RunResponse::make($this->runner, $info->repo);
-            $rr->timestamp = time();
-            $rr->done = true;
-            $rr->status = "done";
-            $rr->result = $info->runner_evaluate($this->runner, $rr->timestamp);
-            return $rr;
+            $qi = $qi ?? QueueItem::make_info($info, $this->runner);
+            $qi->step(new QueueState);
+            return $qi->full_response();
         }
 
         // otherwise check runnability and enqueue
@@ -190,36 +180,50 @@ class RunRequest {
                 return self::error("Nothing to do.");
             }
             $qi = QueueItem::make_info($info, $this->runner);
-            $qi->flags |= ($this->viewer->privChair ? QueueItem::FLAG_UNWATCHED : 0)
-                | ($this->is_ensure ? QueueItem::FLAG_ENSURE : 0);
-            $qi->enqueue();
-            $qi->schedule(100);
+            if ($this->viewer->privChair) {
+                $qi->flags |= QueueItem::FLAG_UNWATCHED;
+            }
+            if ($this->if_needed) {
+                $qi->ifneeded = 1;
+            }
+            $qi->schedule(100, $this->viewer->contactId);
         } else {
             $qi->update();
         }
-        assert($qi->status === 0 && $qi->runat === 0 && $qi->runorder > 0);
+        assert($qi->scheduled() && $qi->runat === 0 && $qi->runorder > 0);
         session_write_close();
 
         // process queue
-        $qs = new QueueStatus;
-        $result = $info->conf->qe("select * from ExecutionQueue where status>=0 and runorder<=? order by runorder asc, queueid asc limit 100", $qi->runorder);
-        while (($qix = QueueItem::fetch($info->conf, $result))) {
-            $qix = $qix->queueid === $qi->queueid ? $qi : $qix;
-            if (!$qix->substantiate($qs)) {
+        $qs = new QueueState;
+        $result = $info->conf->qe("select * from ExecutionQueue
+                where (status>=? and status<? and runorder<=?) or queueid=?
+                order by runorder asc, queueid asc limit 500",
+            QueueItem::STATUS_SCHEDULED, QueueItem::STATUS_CANCELLED,
+            $qi->runorder, $qi->queueid);
+        $qs = QueueState::fetch_list($info->conf, $result);
+        $nahead = 0;
+        $is_ahead = true;
+        while (($qix = $qs->shift())) {
+            if ($qix->queueid === $qi->queueid) {
+                $qix = $qi;
+                $is_ahead = false;
+            } else if ($is_ahead) {
+                ++$nahead;
+            }
+            if (!$qix->step($qs)) {
                 if ($qix === $qi) {
                     return self::error($qix->last_error);
                 } else {
                     error_log($qix->unparse_key() . ": " . $qix->last_error);
                 }
-            } else if ($qix === $qi && $qi->status > 0) {
+            } else if ($qix === $qi && $qi->has_response()) {
                 return $qi->full_response();
             }
         }
-        Dbl::free($result);
         return [
             "queueid" => $qi->queueid,
             "onqueue" => true,
-            "nahead" => $qs->nahead
+            "nahead" => $nahead
         ];
     }
 
@@ -230,8 +234,8 @@ class RunRequest {
             self::quit($err);
         } else if (isset($this->qreq->chain) && ctype_digit($this->qreq->chain)) {
             $t = $this->pset->title;
-            if ($this->is_ensure) {
-                $t .= " Ensure";
+            if ($this->if_needed) {
+                $t .= " (if needed)";
             }
             $t .= " {$this->runner->title}";
             $this->conf->header(htmlspecialchars($t), "home");
@@ -240,9 +244,10 @@ class RunRequest {
                 Ht::form($this->conf->hoturl("=run"), ["id" => "pa-runmany-form"]),
                 '<div class="f-contain">',
                 Ht::hidden("u", ""),
-                Ht::hidden("pset", $this->pset->urlkey);
-            if ($this->is_ensure) {
-                echo Ht::hidden("ensure", 1);
+                Ht::hidden("pset", $this->pset->urlkey),
+                Ht::hidden("jobs", "", ["disabled" => 1]);
+            if ($this->if_needed) {
+                echo Ht::hidden("ifneeded", 1);
             }
             echo Ht::hidden("run", $this->runner->name, ["id" => "pa-runmany"]),
                 '</div></form>';
@@ -278,8 +283,10 @@ class RunRequest {
                         $qi = QueueItem::make_info($info, $this->runner);
                         $qi->chain = $chain;
                         $qi->runorder = QueueItem::unscheduled_runorder($nu * 10);
-                        $qi->flags |= QueueItem::FLAG_UNWATCHED
-                            | ($this->is_ensure ? QueueItem::FLAG_ENSURE : 0);
+                        $qi->flags |= QueueItem::FLAG_UNWATCHED;
+                        if ($this->if_needed) {
+                            $qi->ifneeded = 1;
+                        }
                         $qi->enqueue();
                         ++$nu;
                     }
@@ -287,6 +294,64 @@ class RunRequest {
             }
             $this->conf->redirect_hoturl("run", ["pset" => $this->pset->urlkey, "run" => $this->runner->name, "runmany" => 1, "chain" => $chain]);
         }
+    }
+
+    function download() {
+        $qreq = $this->qreq;
+        if ($qreq->run === null || !$qreq->valid_token()) {
+            return self::error("Permission error.");
+        } else if (($err = $this->check_view(true))) {
+            return self::error($err);
+        } else if (!$qreq->jobs
+                   || !($jobs = json_decode($qreq->jobs))
+                   || !is_array($jobs)) {
+            return self::error("Bad `jobs` parameter.");
+        }
+
+        $boundary = "--peteramati-" . base64url_encode(random_bytes(24));
+
+        $mf = fopen("php://temp", "w+b");
+        foreach ($jobs as $i => $run) {
+            if (!is_object($run)
+                || !is_string($run->u ?? null)
+                || (!is_string($run->pset ?? null) && !is_int($run->pset ?? null))
+                || !is_string($run->run ?? null)
+                || !is_int($run->timestamp ?? null)) {
+                return self::error("Bad `jobs[{$i}]` parameter.");
+            }
+            $pset = $this->conf->pset_by_key($run->pset);
+            if (!$pset) {
+                return self::error("Bad `jobs[{$i}].pset` parameter.");
+            }
+            $user = ContactView::find_user($run->u, $this->viewer, $pset->anonymous);
+            if (!$user) {
+                return self::error("No such user `jobs[{$i}].u` ({$run->u}).");
+            }
+            $runner = $pset->runner_by_key($run->run);
+            if (!$runner) {
+                return self::error("No such runner `jobs[{$i}].run` ({$run->run}).");
+            }
+            if (!$this->viewer->can_view_run($pset, $runner, $user)) {
+                fwrite($mf, "{$boundary}\n" . json_encode($run) . ": Cannot view\n");
+                continue;
+            }
+            $repo = $user->repo($pset->id);
+            $rr = (new RunLogger($pset, $repo))->job_response($run->timestamp, 0, 100 << 20);
+            if (!$rr) {
+                fwrite($mf, "{$boundary}\n" . json_encode($run) . ": No such job\n");
+            } else {
+                fwrite($mf, "{$boundary}\n" . json_encode($run) . "\n");
+                fwrite($mf, $rr->data);
+            }
+            $rr = null;
+        }
+        fwrite($mf, "{$boundary}--\n");
+
+        header("Content-Type: text/plain");
+        header("Content-Disposition: attachment; filename=" . mime_quote_string($this->conf->download_prefix . $pset->urlkey . "-" . $this->runner->name . ".out"));
+        rewind($mf);
+        fpassthru($mf);
+        fclose($mf);
     }
 }
 

@@ -156,7 +156,7 @@ class UpdateSchema {
                 error_log("RepositoryGrade[$pset,$repoid] conflict: branch " . $branch . " vs. " . $repos["$pset,$repoid"]);
             }
         }
-        $qstager(true);
+        $qstager(null);
         Dbl::free($result);
         return true;
     }
@@ -259,7 +259,7 @@ class UpdateSchema {
             }
             unset($items);
         }
-        $mqe(true);
+        $mqe(null);
         return true;
     }
 
@@ -279,7 +279,7 @@ class UpdateSchema {
             }
         }
         Dbl::free($result);
-        $qstager(true);
+        $qstager(null);
         return true;
     }
 
@@ -301,7 +301,7 @@ class UpdateSchema {
             }
         }
         Dbl::free($result);
-        $mq(true);
+        $mq(null);
         return true;
     }
 
@@ -883,6 +883,36 @@ class UpdateSchema {
             && $conf->ql_ok("drop table if exists `RepositoryCommitSnapshot`")
             && $conf->ql_ok("alter table `Repository` drop `analyzedsnapat`")) {
             $conf->update_schema_version(165);
+        }
+        if ($conf->sversion === 165
+            && $conf->ql_ok("alter table `ExecutionQueue` add `ensure` varbinary(8192) DEFAULT NULL")) {
+            $conf->update_schema_version(166);
+        }
+        if ($conf->sversion === 166
+            && $conf->ql_ok("alter table `ExecutionQueue` change `lockfile` `lockfile` varbinary(1024) DEFAULT NULL")
+            && $conf->ql_ok("alter table `ExecutionQueue` add `eventsource` varbinary(1024) DEFAULT NULL")) {
+            $conf->update_schema_version(167);
+        }
+        if ($conf->sversion === 167
+            && $conf->ql_ok("alter table `ExecutionQueue` add `ifneeded` tinyint NOT NULL DEFAULT '0'")
+            && $conf->ql_ok("update ExecutionQueue set ifneeded=1 where flags!=0 and (flags&2)!=0")) {
+            $conf->update_schema_version(168);
+        }
+        if ($conf->sversion === 168
+            && $conf->ql_ok("alter table `ExecutionQueue` add `runstride` int NOT NULL DEFAULT 0")) {
+            $conf->update_schema_version(169);
+        }
+        if ($conf->sversion === 169
+            && $conf->ql_ok("alter table Repository drop `snapcommitline`")
+            && $conf->ql_ok("alter table Repository drop `snapcommitat`")) {
+            $conf->update_schema_version(170);
+        }
+        if ($conf->sversion === 170
+            && $conf->ql_ok("alter table `ExecutionQueue` change `queueclass` `queueclass` varbinary(48) NOT NULL")
+            && $conf->ql_ok("alter table `ExecutionQueue` drop key `queueclass`")
+            && $conf->ql_ok("update ExecutionQueue set queueclass=concat(queueclass,'#',nconcurrent) where nconcurrent>0")
+            && $conf->ql_ok("alter table `ExecutionQueue` drop `nconcurrent`")) {
+            $conf->update_schema_version(171);
         }
 
         $conf->ql_ok("delete from Settings where name='__schema_lock'");

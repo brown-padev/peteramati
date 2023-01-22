@@ -2,6 +2,10 @@
 // Peteramati is Copyright (c) 2006-2021 Eddie Kohler
 // See LICENSE for open-source distribution terms
 
+function encodeURIComponentPlus(s) {
+    return encodeURIComponent(s).replace(/%20/g, "+");
+}
+
 function serialize_object(x) {
     if (typeof x === "string") {
         return x;
@@ -9,7 +13,7 @@ function serialize_object(x) {
         var k, v, a = [""];
         for (k in x) {
             if ((v = x[k]) != null)
-                a.push(encodeURIComponent(k), "=", encodeURIComponent(v).replace(/%20/g, "+"), "&");
+                a.push(encodeURIComponent(k), "=", encodeURIComponentPlus(v), "&");
         }
         a[a.length - 1] = "";
         return a.join("");
@@ -62,12 +66,12 @@ function hoturl_psetinfo(elt, page, args) {
     }
     let sheet;
     if ((page === "api/grade" || page === "=api/grade")
-        && (sheet = $(p).data("pa-gradeinfo"))) {
+        && (sheet = p.pa__gradesheet)) {
         const enames = [];
         for (let i in sheet.entries) {
             enames.push(i);
         }
-        args.push("knowngrades=" + encodeURIComponent(enames.join(" ")));
+        args.push("knowngrades=" + encodeURIComponentPlus(enames.join(" ")));
     }
 }
 
@@ -94,7 +98,7 @@ export function hoturl(page, options) {
             } else if (k === "psetinfo" && v instanceof Element) {
                 hoturl_psetinfo(v, page, xv);
             } else {
-                xv.push(encodeURIComponent(k).concat("=", encodeURIComponent(v).replace(/%20/g, "+")));
+                xv.push(encodeURIComponent(k).concat("=", encodeURIComponentPlus(v)));
             }
         }
     }
@@ -114,11 +118,11 @@ export function hoturl(page, options) {
         }
         hoturl_clean_before(x, /^u=([^?&#]+)$/, "~");
         hoturl_clean(x, /^fn=(\w+)$/);
-        hoturl_clean(x, /^pset=([^?&#]+)$/);
-        hoturl_clean(x, /^commit=([0-9A-Fa-f]+)$/);
     } else if (page === "index") {
         hoturl_clean_before(x, /^u=([^?&#]+)$/, "~");
-    } else if (page === "pset" || page === "run") {
+    } else if (page === "run") {
+        hoturl_clean_before(x, /^u=([^?&#]+)$/, "~");
+    } else if (page === "pset") {
         hoturl_clean_before(x, /^u=([^?&#]+)$/, "~");
         hoturl_clean(x, /^pset=([^?&#]+)$/);
         hoturl_clean(x, /^commit=([0-9A-Fa-f]+)$/);
@@ -133,44 +137,31 @@ export function hoturl(page, options) {
     return siteinfo.site_relative + x.pt + x.t + anchor;
 }
 
-export function url_absolute(url, loc) {
-    var x = "", m;
-    loc = loc || window.location.href;
-    if (!/^\w+:\/\//.test(url)
-        && (m = loc.match(/^(\w+:)/)))
-        x = m[1];
-    if (x && !/^\/\//.test(url)
-        && (m = loc.match(/^\w+:(\/\/[^\/]+)/)))
-        x += m[1];
-    if (x && !/^\//.test(url)
-        && (m = loc.match(/^\w+:\/\/[^\/]+(\/[^?#]*)/))) {
-        x = (x + m[1]).replace(/\/[^\/]+$/, "/");
-        while (url.substring(0, 3) === "../") {
-            x = x.replace(/\/[^\/]*\/$/, "/");
-            url = url.substring(3);
-        }
-    }
-    return x + url;
-}
-
 export function hoturl_absolute_base() {
     if (!siteinfo.absolute_base) {
-        siteinfo.absolute_base = url_absolute(siteinfo.base);
+        siteinfo.absolute_base = new URL(siteinfo.base, document.baseURI).href;
     }
     return siteinfo.absolute_base;
 }
 
-export function hoturl_post_go(page, options) {
+export function hoturl_get_go(page, options) {
+    window.location = hoturl(page, options);
+}
+
+export function hoturl_post_go(page, options, data) {
     const form = document.createElement("form");
     form.setAttribute("method", "post");
     form.setAttribute("enctype", "multipart/form-data");
     form.setAttribute("accept-charset", "UTF-8");
     form.action = hoturl(page, options);
-    const input = document.createElement("input");
-    input.type = "hidden";
-    input.name = "____empty____";
-    input.value = "1";
-    form.appendChild(input);
+    data = data || {____empty____: 1};
+    for (let n in data) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = n;
+        input.value = data[n];
+        form.appendChild(input);
+    }
     document.body.appendChild(form);
     form.submit();
 }

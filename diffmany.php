@@ -21,8 +21,12 @@ class DiffMany_Page {
     public $viewer;
     /** @var list<string> */
     private $files;
+    /** @var bool */
+    private $fileglob = false;
     /** @var list<string> */
     private $suppress_grades = [];
+    /** @var ?list<0|4|5|7> */
+    private $values_vf;
     /** @var int */
     public $psetinfo_idx = 0;
     /** @var array<string,GradeEntry> */
@@ -37,6 +41,7 @@ class DiffMany_Page {
         if ($qreq->files) {
             $f = simplify_whitespace($qreq->files);
             $fs = $f === "" ? [] : explode(" ", $f);
+            $this->fileglob = !!preg_match('/[\[\]*?]/', $qreq->files);
         } else if ($qreq->file) {
             $fs = [$qreq->file];
         } else {
@@ -51,9 +56,13 @@ class DiffMany_Page {
             foreach ($pset->grades_by_key_list($qreq->grade, true) as $ge) {
                 $grades[$ge->key] = true;
             }
+            $this->values_vf = [];
             foreach ($pset->grades as $ge) {
                 if (!isset($grades[$ge->key])) {
                     $this->suppress_grades[] = $ge->key;
+                    $this->values_vf[] = 0;
+                } else {
+                    $this->values_vf[] = $ge->vf();
                 }
             }
         }
@@ -84,12 +93,16 @@ class DiffMany_Page {
             echo '" data-pa-directory="', htmlspecialchars($pset->directory_slash);
         }
         if ($info->can_edit_scores()
-            || ($info->can_view_grade() && $info->is_grading_commit())) {
-            echo '" data-pa-gradeinfo="', htmlspecialchars(json_encode_browser($info->grade_json(PsetView::GRADEJSON_SLICE)));
+            || ($info->can_view_any_grade() && $info->is_grading_commit())) {
+            $gexp = $info->grade_export(PsetView::GRADEJSON_SLICE);
+            if ($this->values_vf !== null) {
+                $gexp->set_fixed_values_vf($this->values_vf);
+            }
+            $gj = $gexp->jsonSerialize();
         } else {
-            echo '" data-pa-gradeinfo="', htmlspecialchars(json_encode_browser($info->info_json()));
+            $gj = $info->info_json();
         }
-        echo '">';
+        echo '" data-pa-gradeinfo=\'', json_escape_browser_sqattr($gj), '\'>';
 
         $u = $this->viewer->user_linkpart($user);
         if ($user !== $this->viewer && !$user->is_anonymous && $user->contactImageId) {
@@ -115,10 +128,10 @@ class DiffMany_Page {
 
         if (!$pset->gitless && $info->hash() && $info->commit()) {
             $lnorder = $info->visible_line_notes();
-            $onlyfiles = $this->files;
+            $onlyfiles = $this->fileglob ? $this->expand_files($info) : $this->files;
+            $onefile = count($onlyfiles ?? []) === 1 && !$this->fileglob;
             $diff = $info->diff($info->base_handout_commit(), $info->commit(), $lnorder, ["onlyfiles" => $onlyfiles, "no_full" => true]);
-            if ($onlyfiles !== null
-                && count($onlyfiles) === 1
+            if ($onefile
                 && isset($diff[$onlyfiles[0]])
                 && $this->qreq->lines
                 && preg_match('/\A\s*(\d+)-(\d+)\s*\z/', $this->qreq->lines, $m)) {
@@ -135,7 +148,7 @@ class DiffMany_Page {
                     $info->echo_file_diff($file, $dinfo, $lnorder, [
                         "expand" => true,
                         "hide_left" => true,
-                        "no_heading" => count($this->files ?? []) == 1,
+                        "no_heading" => $onefile,
                         "diffcontext" => "$linkpart_html / "
                     ]);
                 }
@@ -154,7 +167,23 @@ class DiffMany_Page {
         if ($want_grades) {
             echo Ht::unstash_script('$pa.loadgrades.call(document.getElementById("pa-psetinfo' . $this->psetinfo_idx . '"))');
         }
-        echo "<hr />\n";
+        echo "<hr>\n";
+    }
+
+    /** @return list<string> */
+    private function expand_files(PsetView $info) {
+        if (!$info->repo || !$info->hash()) {
+            return $this->files;
+        }
+        $result = [];
+        foreach ($info->repo->ls_files($info->hash(), $info->pset->directory) as $f) {
+            foreach ($this->files as $pat) {
+                if (fnmatch($pat, $f, FNM_PATHNAME | FNM_PERIOD)) {
+                    $result[] = $f;
+                }
+            }
+        }
+        return $result;
     }
 
     function run() {
@@ -163,17 +192,19 @@ class DiffMany_Page {
             $title .= " > " . join(" ", $this->files);
         }
         $this->conf->set_multiuser_page();
-        $this->conf->header(htmlspecialchars($title), "home");
+        $this->conf->header('<span class="pset-title">' . htmlspecialchars($title) . '</span>', "home");
 
         foreach ($this->pset->grade_script ?? [] as $gs) {
             Ht::stash_html($this->conf->make_script_file($gs));
         }
         Ht::stash_script("\$pa.long_page = true");
-        $gexp = new GradeExport($this->pset, $this->viewer->isPC);
-        $gexp->set_exported_entries(null);
-        echo "<div class=\"pa-psetinfo pa-diffset\" data-pa-gradeinfo=\"",
-             htmlspecialchars(json_encode($gexp)),
-             "\">";
+        $gexp = new GradeExport($this->pset);
+        $gexp->export_entries();
+        if ($this->values_vf !== null) {
+            $gexp->set_fixed_values_vf($this->values_vf);
+        }
+        echo "<div class=\"pa-psetinfo pa-diffset\" data-pa-gradeinfo='",
+            json_escape_browser_sqattr($gexp), "'>";
 
         if (trim((string) $this->qreq->users) === "") {
             $want = [];

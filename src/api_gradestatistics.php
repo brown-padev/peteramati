@@ -1,6 +1,6 @@
 <?php
 // api/api_gradestatistics.php -- Peteramati API for grading
-// HotCRP and Peteramati are Copyright (c) 2006-2021 Eddie Kohler and others
+// HotCRP and Peteramati are Copyright (c) 2006-2022 Eddie Kohler and others
 // See LICENSE for open-source distribution terms
 
 class Series {
@@ -60,6 +60,8 @@ class Series {
         }
     }
 
+    /** @param bool $pcview
+     * @return object */
     function summary($pcview = false) {
         $this->calculate();
         $r = (object) ["n" => $this->n, "cdf" => $this->cdf];
@@ -107,7 +109,10 @@ class Series {
 }
 
 class GradeStatistics_API {
+    /** @param bool $pcview */
     static function compute(Pset $pset, $pcview) {
+        $vf = ($pcview ? VF_TF : 0) | VF_STUDENT_ANY;
+
         $series = new Series;
         $xseries = $noextra_series = $xnoextra_series = null;
         if ($pset->has_extra) {
@@ -136,7 +141,8 @@ class GradeStatistics_API {
         }
         $result = $pset->conf->qe_raw($q . " where $notdropped");
         while (($row = $result->fetch_row())) {
-            if (($g = ContactView::pset_grade(json_decode($row[3] ?? $row[1]), $pset))) {
+            if (($jstr = $row[3] ?? $row[1])
+                && ($g = ContactView::pset_grade(json_decode($jstr), $pset))) {
                 $cid = +$row[0];
                 $series->add($cid, $g->total);
                 if ($xseries && $row[2]) {
@@ -176,7 +182,7 @@ class GradeStatistics_API {
         $nge = 0;
         $lastge = null;
         $maxtotal = 0;
-        foreach ($pset->visible_grades($pcview) as $ge) {
+        foreach ($pset->visible_grades($vf) as $ge) {
             if (!$ge->no_total) {
                 ++$nge;
                 $lastge = $ge;
@@ -194,7 +200,7 @@ class GradeStatistics_API {
             }
         }
         if ($nge === 1) {
-            $r->entry = $lastge->json($pcview);
+            $r->entry = $lastge->json($vf);
         }
 
         return $r;

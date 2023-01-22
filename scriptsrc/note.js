@@ -6,7 +6,7 @@ import { hasClass, addClass, removeClass } from "./ui.js";
 import { escape_entities } from "./encoders.js";
 import { hoturl } from "./hoturl.js";
 import { api_conditioner } from "./xhr.js";
-import { ftext } from "./render.js";
+import { ftext, render_onto } from "./render.js";
 import { text_eq } from "./utils.js";
 import { Filediff, Linediff } from "./diff.js";
 
@@ -158,7 +158,7 @@ export class Note {
             $(this.element).find(":focus").blur();
         }
 
-        var $td = $(this.element).find(".pa-notebox"),
+        const $td = $(this.element).find(".pa-notebox"),
             $content = $td.children();
         if (transition) {
             $content.slideUp(80).queue(function () { $content.remove(); });
@@ -176,7 +176,8 @@ export class Note {
             return true;
         }
 
-        let t = '<div class="pa-notecontent clearfix">';
+        const contdiv = document.createElement("div");
+        contdiv.className = "pa-notecontent clearfix";
         if (this.users) {
             const authorids = $.isArray(this.users) ? this.users : [this.users],
                 authors = [];
@@ -193,17 +194,27 @@ export class Note {
                 }
             }
             if (authors.length) {
-                t += '<div class="pa-note-author">[' + authors.join(', ') + ']</div>';
+                const authordiv = document.createElement("div");
+                authordiv.className = "pa-note-author";
+                authordiv.append("[" + authors.join(", ") + "]");
+                contdiv.append(authordiv);
             }
         }
-        t = t.concat('<div class="pa-dr pa-note pa-', this.iscomment ? 'comment' : 'grade', 'note"></div></div>');
-        $td.append(t);
+        if (!this.iscomment) {
+            const markdiv = document.createElement("div");
+            markdiv.className = "pa-gradenote-marker";
+            contdiv.append(markdiv);
+        }
+        const notediv = document.createElement("div");
+        notediv.className = "pa-dr pa-note pa-".concat(this.iscomment ? "comment" : "grade", "note");
+        contdiv.append(notediv);
+        $td.append(contdiv);
 
-        ftext.render(this.ftext, $td.find(".pa-note")[0]);
+        render_onto(notediv, "f", this.ftext);
 
         fix_links_at(this.element);
         if (transition) {
-            $td.find(".pa-notecontent").hide().slideDown(80);
+            $(contdiv).hide().slideDown(80);
         } else {
             $td.show();
             removeClass(this.element, "hidden");

@@ -62,33 +62,101 @@ function make_xterm_write_handler(write) {
     };
 }
 
+function trim_data_to_offset(data, offset) {
+    const re = /^([\x00-\x7F]*)([\u0080-\u07FF]*)([\u0800-\uD7FF\uE000-\uFFFF]*)((?:[\uD800-\uDBFF][\uDC00-\uDFFF])*)/y;
+    let matchIndex = 0;
+    while (matchIndex < data.data.length && data.offset < offset) {
+        re.lastIndex = matchIndex;
+        const m = data.data.match(re);
+        if (!m) {
+            break;
+        }
+        if (m[1].length) {
+            const n = Math.min(offset - data.offset, m[1].length);
+            matchIndex += n;
+            data.offset += n;
+        }
+        if (m[2].length) {
+            const n = Math.min(offset - data.offset, m[2].length * 2);
+            matchIndex += n / 2;
+            data.offset += n;
+        }
+        if (m[3].length) {
+            const n = Math.min(offset - data.offset, m[3].length * 3);
+            matchIndex += n / 3;
+            data.offset += n;
+        }
+        if (m[4].length) {
+            const n = Math.min(offset - data.offset, m[4].length * 2);
+            matchIndex += n / 2; // surrogate pairs
+            data.offset += n;
+        }
+    }
+    data.data = data.data.substring(matchIndex);
+}
+
+function utf8_length(str) {
+    const re = /^([\x00-\x7F]*)([\u0080-\u07FF]*)([\u0800-\uD7FF\uE000-\uFFFF]*)((?:[\uD800-\uDBFF][\uDC00-\uDFFF])*)/y;
+    let matchIndex = 0, offset = 0;
+    while (matchIndex < str.length) {
+        re.lastIndex = matchIndex;
+        const m = str.match(re);
+        if (!m) {
+            break;
+        }
+        if (m[1].length) {
+            matchIndex += m[1].length;
+            offset += m[1].length;
+        }
+        if (m[2].length) {
+            matchIndex += m[2].length;
+            offset += m[2].length * 2;
+        }
+        if (m[3].length) {
+            matchIndex += m[3].length;
+            offset += m[3].length * 3;
+        }
+        if (m[4].length) {
+            matchIndex += m[4].length;
+            offset += m[4].length * 2; // surrogate pairs
+        }
+    }
+    return offset;
+}
+
 export function run(button, opts) {
-    const $f = $(button).closest("form"),
+    const form = button.closest("form"),
         category = button.getAttribute("data-pa-run-category") || button.value,
-        directory = $(button).closest(".pa-psetinfo").attr("data-pa-directory"),
+        psetinfo = button.closest(".pa-psetinfo"),
+        directory = psetinfo ? psetinfo.getAttribute("data-pa-directory") : "",
         therun = document.getElementById("pa-run-" + category),
         therunout = therun.closest(".pa-runout"),
         thepre = $(therun).find("pre");
     let thexterm,
         checkt,
         kill_checkt,
-        queueid = opts.queueid || null;
+        queueid = opts.queueid || null,
+        eventsource = null,
+        sendtimeout = null;
 
     therunout && removeClass(therunout, "hidden");
+    removeClass(therun, "need-run");
     fold61(therun, therunout, true);
 
-    if (opts.unfold && therun.dataset.paTimestamp) {
-        checkt = +therun.dataset.paTimestamp;
+    if (opts.unfold && therun.hasAttribute("data-pa-timestamp")) {
+        checkt = +therun.getAttribute("data-pa-timestamp");
     } else if (opts.timestamp) {
         checkt = opts.timestamp;
     }
 
-    if (hasClass($f[0], "pa-run-active")) {
+    if (hasClass(form, "pa-run-active")) {
         return true;
     }
-    $f.find("button").prop("disabled", true);
-    delete therun.dataset.paTimestamp;
-    addClass($f[0], "pa-run-active");
+    $(form).find("button").prop("disabled", true);
+    addClass(form, "pa-run-active");
+    if (!checkt) {
+        therun.removeAttribute("data-pa-timestamp");
+    }
 
     if (!checkt && !opts.noclear) {
         thepre.html("");
@@ -118,8 +186,8 @@ export function run(button, opts) {
         return Math.max(min, Math.min(w, max));
     }
 
-    if (therun.dataset.paXtermJs
-        && therun.dataset.paXtermJs !== "false"
+    if (therun.getAttribute("data-pa-xterm-js")
+        && therun.getAttribute("data-pa-xterm-js") !== "false"
         && window.Terminal) {
         removeClass(thepre[0].parentElement, "pa-run-short");
         addClass(thepre[0].parentElement, "pa-run-xterm-js");
@@ -173,7 +241,8 @@ export function run(button, opts) {
     }
 
     let ibuffer = "", // initial buffer; holds data before any results arrive
-        offset = -1, backoff = 50, times = null;
+        preamble_offset = null,
+        offset = 0, backoff = 50, times = null;
 
     function hide_cursor() {
         if (thexterm) {
@@ -184,17 +253,18 @@ export function run(button, opts) {
     }
 
     function done(complete) {
-        if (hasClass($f[0], "pa-run-active")) {
-            removeClass($f[0], "pa-run-active");
-            $f.find("button").prop("disabled", false);
+        if (hasClass(form, "pa-run-active")) {
+            removeClass(form, "pa-run-active");
+            $(form).find("button").prop("disabled", false);
         }
         if (complete !== false) {
             hide_cursor();
             if (button.hasAttribute("data-pa-run-grade")) {
-                grades_fetch(button.closest(".pa-psetinfo")); // XXX not on replay
+                grades_fetch(psetinfo); // XXX not on replay
             }
             opts.done_function && opts.done_function();
         }
+        send_after(-1);
     }
 
     function append(str, done) {
@@ -227,6 +297,7 @@ export function run(button, opts) {
                 return; // not ready yet
             }
 
+            preamble_offset = utf8_length(ibuffer.substr(0, pos + 2));
             str = ibuffer.substr(pos + 2);
             ibuffer = null;
 
@@ -264,10 +335,19 @@ export function run(button, opts) {
             if (n < 0) {
                 n = times.length;
             }
-            if (times.charCodeAt(p) !== 35 /* # */
+            const ch = times.charCodeAt(p);
+            if ((ch === 43 /* + */ || (ch >= 48 && ch <= 57 /* 0-9 */))
                 && (c = times.indexOf(",", p)) >= 0
                 && c < n) {
-                a.push(+times.substring(p, c), +times.substring(c + 1, n));
+                let time = +times.substring(p, c),
+                    offset = +times.substring(c + 1, n);
+                if (ch === 43) {
+                    time += a[a.length - 2];
+                }
+                if (times.charCodeAt(c + 1) === 43) {
+                    offset += a[a.length - 1];
+                }
+                a.push(time, offset);
             }
             p = n + 1;
         }
@@ -347,7 +427,7 @@ export function run(button, opts) {
         function set_time() {
             if (erange) {
                 erange.value = tlast;
-                etime.innerHTML = sprintf("%d:%02d.%03d", Math.trunc(tlast / 60000), Math.trunc(tlast / 1000) % 60, Math.trunc(tlast) % 1000);
+                etime.textContent = sprintf("%d:%02d.%03d", Math.trunc(tlast / 60000), Math.trunc(tlast / 1000) % 60, Math.trunc(tlast) % 1000);
             }
         }
 
@@ -364,6 +444,18 @@ export function run(button, opts) {
                     partial_outstanding = false;
                     partial_time && f(partial_time);
                 });
+            }
+        }
+
+        function tpos_offset(tpos) {
+            if (ibuffer !== null) {
+                const nlnl = data.data.indexOf("\n\n");
+                append_data(data.data.substring(0, nlnl + 2), data);
+            }
+            if (tpos < times.length) {
+                return preamble_offset + times[tpos + 1];
+            } else {
+                return data.size;
             }
         }
 
@@ -401,18 +493,18 @@ export function run(button, opts) {
                 ibuffer = "";
                 tpos = 0;
             }
-            let boffset = tpos < times.length ? times[tpos + 1] : data.size;
+            let boffset = tpos_offset(tpos);
 
             // flow control: give xterm.js 8MB of data at a time
             const maxdata = 8 << 20;
-            let eoffset = npos < times.length ? times[npos + 1] : data.size;
+            let eoffset = tpos_offset(npos);
             if (boffset + maxdata < eoffset) {
                 let lpos = tpos;
                 while (lpos < npos) {
                     const m = lpos + (((npos - lpos) >> 1) & ~1);
-                    if (boffset + maxdata < times[m + 1]) {
+                    if (boffset + maxdata < times[m + 1] + preamble_offset) {
                         npos = m;
-                        eoffset = times[m + 1];
+                        eoffset = tpos_offset(m);
                     } else {
                         lpos = m + 2;
                     }
@@ -474,32 +566,83 @@ export function run(button, opts) {
 
     let send_out = 0, send_args = {};
 
-    function succeed(data) {
-        var x, t;
+    function succeed_eventsource(msge) {
+        let ok = false;
+        if (msge && msge.data) {
+            try {
+                let json = JSON.parse(msge.data);
+                if (json
+                    && typeof json === "object"
+                    && json.data != null
+                    && json.offset != null) {
+                    json.offset += preamble_offset;
+                    json.end_offset += preamble_offset;
+                    if (json.ok == null) {
+                        json.ok = true;
+                    }
+                    if (json.offset <= offset) {
+                        succeed(json);
+                    } else {
+                        send({write: ""});
+                    }
+                    ok = true;
+                }
+            } catch (e) {
+            }
+        }
+        ok || error_eventsource();
+    }
 
+    function error_eventsource() {
+        if (eventsource) {
+            eventsource.close();
+            eventsource = false;
+            send();
+        }
+    }
+
+    function send_after(ms) {
+        if (sendtimeout) {
+            clearTimeout(sendtimeout);
+        }
+        if (ms >= 0) {
+            sendtimeout = setTimeout(send_from_timeout, ms);
+        } else {
+            sendtimeout = null;
+        }
+    }
+
+    function send_from_timeout() {
+        sendtimeout = null;
+        send();
+    }
+
+    function succeed(data) {
         if (queueid) {
             thepre.find("span.pa-runqueue").remove();
         }
         if (data && data.onqueue) {
             queueid = data.queueid;
-            t = "On queue, " + data.nahead + (data.nahead == 1 ? " job" : " jobs") + " ahead";
+            let t = "On queue, ".concat(data.nahead, (data.nahead == 1 ? " job" : " jobs"), " ahead");
             if (data.headage) {
-                if (data.headage < 10) {
-                    x = data.headage;
-                } else {
-                    x = Math.round(data.headage / 5 + 0.5) * 5;
+                let headage = data.headage;
+                if (headage > 10) {
+                    headage = Math.round(headage / 5 + 0.5) * 5;
                 }
-                t += ", oldest began about " + x + (x == 1 ? " second" : " seconds") + " ago";
+                t = t.concat(", oldest began about ", headage, (headage == 1 ? " second" : " seconds"), " ago");
             }
-            thepre[0].insertBefore(($("<span class='pa-runqueue'>" + t + "</span>"))[0], thepre[0].lastChild);
-            setTimeout(send, 10000);
+            const span = document.createElement("span");
+            span.className = "pa-runqueue";
+            span.append(t);
+            thepre[0].insertBefore(span, thepre[0].lastChild);
+            send_after(10000);
             return;
         }
 
-        stop_button(data && (data.status === "working" || data.status === "workingconflict"));
+        stop_button(data && (data.status == null || data.status === "working") && !data.done);
 
         if (!data || !data.ok) {
-            x = "Unknown error";
+            let x = "Unknown error";
             if (data && data.loggedout) {
                 x = "You have been logged out (perhaps due to inactivity). Please reload this page.";
             } else if (data) {
@@ -522,60 +665,60 @@ export function run(button, opts) {
             done(false);
         }
 
-        checkt = checkt || data.timestamp;
-        while (data.data && data.offset < offset) {
-            let m = data.data.match(/^([\x00-\x7F]*)([\u0080-\u07FF]*)([\u0800-\uD7FF\uE000-\uFFFF]*)((?:[\uD800-\uDBFF][\uDC00-\uDFFF])*)/);
-            if (!m) {
-                setTimeout(send, 0);
+        if (data.eventsource
+            && data.status === "working"
+            && eventsource == null) {
+            eventsource = new EventSource(window.siteinfo.base.concat("runevents/v1/", data.eventsource));
+            eventsource.onmessage = succeed_eventsource;
+            eventsource.onerror = error_eventsource;
+        }
+
+        if (!checkt && data.timestamp) {
+            checkt = data.timestamp;
+            therun.setAttribute("data-pa-timestamp", data.timestamp);
+        }
+
+        // Skip data up to UTF-8 `offset`
+        if (data.data
+            && data.offset < offset) {
+            trim_data_to_offset(data, offset);
+            if (data.offset < offset) {
+                send_after(0);
                 return;
             }
-            let nc = 0;
-            if (m[1].length) {
-                const n = Math.min(offset - data.offset, m[1].length);
-                nc += n;
-                data.offset += n;
-            }
-            if (m[2].length) {
-                const n = Math.min(offset - data.offset, m[2].length * 2);
-                nc += n / 2;
-                data.offset += n;
-            }
-            if (m[3].length) {
-                const n = Math.min(offset - data.offset, m[3].length * 3);
-                nc += n / 3;
-                data.offset += n;
-            }
-            if (m[4].length) {
-                const n = Math.min(offset - data.offset, m[4].length * 2);
-                nc += n / 2; // surrogate pairs
-                data.offset += n;
-            }
-            data.data = data.data.substring(nc);
         }
+
         // Stay on alternate screen when done (rather than clearing it)
+        let m;
         if (data.data
             && !data.partial
             && data.done
-            && (x = data.data.match(/\x1b\[\?1049l(?:[\r\n]|\x1b\[\?1l|\x1b>)*$/))) {
-            data.data = data.data.substring(0, data.data.length - x[0].length);
+            && (m = data.data.match(/\x1b\[\?1049l(?:[\r\n]|\x1b\[\?1l|\x1b>)*$/))) {
+            data.data = data.data.substring(0, data.data.length - m[0].length);
         }
-        if (data.data != null) {
-            if (data.end_offset > data.offset
-                && data.end_offset >= data.offset + data.data.length) {
-                offset = data.end_offset;
-            } else {
-                offset = data.offset + data.data.length;
-            }
-            if (data.done && data.time_data != null && ibuffer === "") {
-                // Parse timing data
-                append_timed(data);
-                return;
-            }
 
+        // Pure replay -> append_timed
+        if (data.done
+            && data.time_data != null
+            && ibuffer === "") {
+            // Parse timing data
+            append_timed(data);
+            return;
+        }
+
+        // Append data
+        if (data.data != null
+            && data.offset === offset
+            && data.end_offset >= offset) {
+            offset = data.end_offset;
             append_data(data.data, data);
             backoff = 100;
         }
+
         if (data.result) {
+            if (!data.done || data.partial) {
+                throw new Error("data.result must only be present on last");
+            }
             if (ibuffer !== null) {
                 append_data("\n\n", data);
             }
@@ -586,10 +729,10 @@ export function run(button, opts) {
         }
 
         scroll_therun();
-        if (data.status == "old") {
-            setTimeout(send, 2000);
+        if (data.status === "old") {
+            send_after(2000);
         } else if (!data.done || data.partial) {
-            setTimeout(send, backoff);
+            send_after(backoff);
         } else {
             done();
             if (data.timed && !hasClass(therun.firstChild, "pa-runrange")) {
@@ -609,15 +752,16 @@ export function run(button, opts) {
         if (args && args.stop) {
             send_args.stop = 1;
         }
-        if (args && args.write) {
+        if (args && args.write != null) {
             send_args.write = (send_args.write || "").concat(args.write);
         }
-        if (send_args.write && send_out > 0) {
+        if ((send_args.write && send_out > 0)
+            || (!send_args.stop && send_args.write == null && eventsource)) {
             return;
         }
 
         let a = {};
-        if (!$f[0].run) {
+        if (!form.elements.run) {
             a.run = category;
         }
         a.offset = offset;
@@ -629,23 +773,25 @@ export function run(button, opts) {
         } else if (args && args.stop && kill_checkt) {
             a.check = kill_checkt;
         }
-        queueid && (a.queueid = queueid);
+        if (queueid) {
+            a.queueid = queueid;
+        }
         Object.assign(a, send_args);
         delete send_args.write;
         delete send_args.stop;
         ++send_out;
 
-        jQuery.ajax($f.attr("action"), {
-            data: $f.serializeWith(a),
+        jQuery.ajax(form.getAttribute("action"), {
+            data: $(form).serializeWith(a),
             type: "POST", cache: false, dataType: "json", timeout: 30000,
             success: function (data) {
                 --send_out;
                 (success || succeed)(data);
-                send_args.write && send({});
+                send_args.write && send();
             },
             error: function () {
-                $f.find(".ajaxsave61").html("Failed");
-                removeClass($f[0], "pa-run-active");
+                $(form).find(".ajaxsave61").html("Failed");
+                removeClass(form, "pa-run-active");
             }
         });
     }
@@ -688,7 +834,7 @@ handle_ui.on("pa-run-show", function () {
     const parent = this.closest(".pa-runout"),
         name = parent.id.substring(4),
         therun = document.getElementById("pa-run-" + name);
-    if (therun.dataset.paTimestamp && !$(therun).is(":visible")) {
+    if (therun.hasAttribute("data-pa-timestamp") && hasClass(therun, "need-run")) {
         const thebutton = jQuery(".pa-runner[value='" + name + "']")[0];
         run(thebutton, {unfold: true});
     } else {

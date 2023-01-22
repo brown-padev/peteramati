@@ -20,7 +20,7 @@ function collect_pset_info(&$students, $sset, $entries) {
     $pset = $sset->pset;
     if ($pset->category && $pset->weight) {
         $grp = $pset->category;
-        $factor = (100.0 * $pset->weight) / ($pset->max_grade(true) * $Conf->category_weight($grp));
+        $factor = (100.0 * $pset->weight) / ($pset->max_grade(VF_TF) * $Conf->category_weight($grp));
     } else {
         $grp = null;
         $factor = 1.0;
@@ -339,7 +339,8 @@ function download_psets_report($request) {
     foreach ($students as $s) {
         $csv->add_row(get_object_vars($s));
     }
-    $csv->download_headers("gradereport.csv");
+    $csv->set_filename("gradereport.csv");
+    $csv->download_headers();
     $csv->download();
     exit;
 }

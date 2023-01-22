@@ -26,16 +26,16 @@ class Home_Student_Page {
             echo '<div class="pa-grp-hidden">';
         }
         $pseturl = $info->hoturl("pset", ["commit" => null]);
-        echo "<h2><a class=\"btn\" style=\"font-size:inherit\" href=\"", $pseturl, "\">",
+        echo "<h2><a class=\"btn pset-title\" style=\"font-size:inherit\" href=\"", $pseturl, "\">",
             htmlspecialchars($info->pset->title), "</a>";
         $x = [];
         $c = null;
-        if ($info->user_can_view_grade() && $info->needs_answers()) {
+        if ($info->user_can_view_some_grade() && $info->needs_answers()) {
             $x[] = "empty";
             $c = "gradesmissing";
         }
-        if ($info->user_can_view_score() && $info->can_view_nonempty_score()) {
-            if ($info->has_visible_required_scores()) {
+        if ($info->user_can_view_some_score() && $info->can_view_nonempty_score()) {
+            if ($info->user_visible_grading_complete()) {
                 $x[] = "grade ready";
             } else {
                 $x[] = "grade partially ready";
@@ -79,11 +79,13 @@ class Home_Student_Page {
             }
             echo '</tbody></table></div></div>';
         }
-        if ($info->can_view_grade()
+        if ($info->can_view_some_grade()
             && ($t = $info->visible_total()) !== null) {
             echo '<div class="pa-gradelist is-main mt-0"><div class="pa-p',
-                !$user_can_view || $info->user_can_view_score() ? '' : ' pa-p-hidden',
-                '"><div class="pa-pt">grade</div>',
+                $info->user_visible_total() === $t ? '' : ' pa-p-hidden',
+                '"><div class="pa-pt">',
+                $info->user_visible_grading_complete() ? "grade" : "partial grade",
+                '</div>',
                 '<div class="pa-pv"><strong>', $t, '</strong>';
             if (($max = $info->grade_max_total())) {
                 echo " / ", $max;
@@ -104,7 +106,7 @@ class Home_Student_Page {
                 || $this->viewer->isPC
                 || $pset->partner
                 || $pset->upi_for($this->user)
-                || $pset->student_answers_editable())) {
+                || $pset->answers_editable_student())) {
             return PsetView::make($pset, $this->user, $this->viewer);
         } else {
             return null;

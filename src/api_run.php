@@ -1,6 +1,6 @@
 <?php
 // api/api_run.php -- Peteramati API for runs
-// HotCRP and Peteramati are Copyright (c) 2006-2021 Eddie Kohler and others
+// HotCRP and Peteramati are Copyright (c) 2006-2022 Eddie Kohler and others
 // See LICENSE for open-source distribution terms
 
 class Run_API {
@@ -19,7 +19,7 @@ class Run_API {
         } else if (!($u = $qi->user())) {
             return ["ok" => false, "error" => "Invalid user."];
         } else {
-            if ($qi->status === -1) {
+            if ($qi->schedulable()) {
                 $qi->schedule(0);
             }
             $anon = $qreq->anonymous ?? $pset->anonymous;
@@ -30,7 +30,7 @@ class Run_API {
                 "pset" => $pset->urlkey,
                 "runner" => $qi->runnername,
                 "timestamp" => $qi->runat,
-                "njobs" => $user->conf->fetch_ivalue("select count(*) from ExecutionQueue where chain=?", $chain)
+                "njobs" => $user->conf->fetch_ivalue("select count(*) from ExecutionQueue where chain=? and status<?", $chain, QueueItem::STATUS_CANCELLED)
             ];
         }
     }

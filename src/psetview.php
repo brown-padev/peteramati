@@ -49,13 +49,15 @@ class PsetView {
     /** @var bool */
     private $_is_sset = false;
 
+    /** @var null|0|1|3|4|5|7 */
+    private $_vf;
+    /** @var null|0|4|5|6|7 */
+    private $_gvf;
+    /** @var null|0|4|5|6|7 */
+    private $_gvf_scores;
     /** @var ?bool */
     private $_can_view_grade;
-    /** @var ?bool */
-    private $_user_can_view_grade;
-    /** @var ?bool */
-    private $_user_can_view_score;
-    /** @var list<int> */
+    /** @var list<0|4|5|6> */
     private $_grades_vf;
     /** @var int */
     private $_grades_suppressed = 0; // 1: set, 2: selecting, 4: some suppressed
@@ -78,6 +80,8 @@ class PsetView {
     private $_gtot;
     /** @var null|int|float */
     private $_gtotne;
+    /** @var null|int|float */
+    private $_gutot;
     /** @var ?bool */
     private $_gallreq;
 
@@ -202,6 +206,22 @@ class PsetView {
             $this->_cpi->reload($this->conf);
         }
         return $this->_cpi;
+    }
+
+
+    /** @param bool $refresh
+     * @suppress PhanAccessReadOnlyProperty */
+    function reload_repo($refresh = false) {
+        $this->repo = $this->_rpi = $this->_cpi = $this->_hash = null;
+        $this->_is_sset = $this->_derived_handout_commit = false;
+        if (!$this->pset->gitless) {
+            $this->repo = $this->user->repo($this->pset->id);
+            $this->branchid = $this->user->branchid($this->pset);
+            $this->branch = $this->conf->branch($this->branchid);
+        }
+        if ($this->repo) {
+            $this->set_hash(null, $refresh);
+        }
     }
 
 
@@ -767,26 +787,39 @@ class PsetView {
         if ($this->_gtottime !== $this->user->gradeUpdateTime) {
             $this->ensure_grades();
             $this->_gtottime = $this->user->gradeUpdateTime;
-            $this->_gtot = $this->_gtotne = $this->_gmaxtot = null;
+            $this->_gtot = $this->_gtotne = $this->_gutot = $this->_gmaxtot = null;
             $this->_gallreq = true;
-            foreach ($this->visible_grades() as $ge) {
-                if (!$ge->no_total) {
-                    $v = $this->_g ? $this->_g[$ge->pcview_index] : null;
-                    if ($v !== null) {
-                        $this->_gtot = ($this->_gtot ?? 0) + $v;
-                    }
-                    if ($v !== null && !$ge->is_extra) {
+            $vf = $this->vf();
+            foreach ($this->visible_grades(VF_TF) as $ge) {
+                if ($ge->no_total) {
+                    continue;
+                }
+                $v = $this->_g[$ge->pcview_index] ?? null;
+                $gvf = $this->_grades_vf[$ge->pcview_index];
+                if ($v !== null && ($gvf & $vf) !== 0) {
+                    $this->_gtot = ($this->_gtot ?? 0) + $v;
+                    if (!$ge->is_extra) {
                         $this->_gtotne = ($this->_gtotne ?? 0) + $v;
                     }
-                    if ($v === null && $ge->required && !$ge->answer) {
-                        $this->_gallreq = false;
-                    } else if (!$ge->is_extra && $ge->max_visible) {
-                        $this->_gmaxtot = ($this->_gmaxtot ?? 0) + $ge->max;
-                    }
                 }
-                $this->_gtot = round_grade($this->_gtot);
-                $this->_gtotne = round_grade($this->_gtotne);
+                if ($v !== null && ($gvf & $vf & ~VF_TF) !== 0) {
+                    $this->_gutot = ($this->_gutot ?? 0) + $v;
+                }
+                if (!$ge->is_extra && $ge->max_visible && ($gvf & $vf) !== 0) {
+                    $this->_gmaxtot = ($this->_gmaxtot ?? 0) + $ge->max;
+                }
+                if (!$ge->is_extra
+                    && ($gvf & ~VF_TF) !== 0
+                    && (($gvf & $vf & ~VF_TF) === 0 || ($v === null && $ge->required))) {
+                    // A non-extra-credit score in the total either:
+                    // 1. will be eventually visible, but is not now
+                    // 2. is required and not provided
+                    $this->_gallreq = false;
+                }
             }
+            $this->_gtot = round_grade($this->_gtot);
+            $this->_gutot = round_grade($this->_gutot);
+            $this->_gtotne = round_grade($this->_gtotne);
         }
     }
 
@@ -803,13 +836,19 @@ class PsetView {
     }
 
     /** @return null|int|float */
+    function user_visible_total() {
+        $this->ensure_visible_total();
+        return $this->_gutot;
+    }
+
+    /** @return null|int|float */
     function visible_total_noextra() {
         $this->ensure_visible_total();
         return $this->_gtotne;
     }
 
     /** @return bool */
-    function has_visible_required_scores() {
+    function user_visible_grading_complete() {
         $this->ensure_visible_total();
         return $this->_gallreq;
     }
@@ -924,11 +963,12 @@ class PsetView {
     }
 
     private function clear_can_view_grade() {
+        $this->_vf = null;
         $this->_can_view_grade = null;
-        $this->_user_can_view_grade = null;
-        $this->_user_can_view_score = null;
         if (($this->_grades_suppressed & 2) === 0) {
             $this->_grades_vf = [];
+            $this->_gvf = null;
+            $this->_gvf_scores = null;
             $this->_grades_suppressed = 0;
         }
     }
@@ -1171,6 +1211,8 @@ class PsetView {
         if ($this->pset->grades_selection_function
             && ($this->_grades_suppressed & 2) === 0) {
             $this->_grades_vf = [];
+            $this->_gvf = null;
+            $this->_gvf_scores = null;
             $this->_grades_suppressed = 0;
         }
     }
@@ -1185,11 +1227,44 @@ class PsetView {
     }
 
 
-    /** @return list<int> */
+    /** @return ?bool */
+    function pinned_scores_visible() {
+        $xpi = $this->pset->gitless ? $this->upi() : $this->rpi();
+        if ($xpi && $xpi->hidegrade != 0) {
+            return $xpi->hidegrade < 0;
+        } else {
+            return null;
+        }
+    }
+
+    /** @return 0|1|3|4|5|7 */
+    private function vf() {
+        if ($this->_vf === null) {
+            $this->_vf = 0;
+            if ($this->viewer->isPC && $this->viewer->can_view_pset($this->pset)) {
+                $this->_vf |= VF_TF;
+            }
+            if (($this->user === $this->viewer || ($this->_vf & VF_TF) !== 0)
+                && $this->pset->visible_student()
+                && ($this->pset->gitless_grades
+                    || ($this->repo && $this->user_can_view_repo_contents()))) {
+                $xpi = $this->pset->gitless ? $this->upi() : $this->rpi();
+                if ($xpi && $xpi->hidegrade != 0) {
+                    $all = $xpi->hidegrade < 0;
+                } else {
+                    $all = $this->pset->scores_visible_student();
+                }
+                $this->_vf |= $all ? VF_STUDENT_ANY : VF_STUDENT_ALWAYS;
+            }
+        }
+        return $this->_vf;
+    }
+
+    /** @return list<0|4|5|6> */
     private function grades_vf() {
         if ($this->_grades_suppressed === 0) {
             $this->_grades_suppressed = 3;
-            $this->_grades_vf = $this->pset->grades_vf($this->pinned_scores_visible());
+            $this->_grades_vf = $this->pset->grades_vf();
             if ($this->pset->grades_selection_function) {
                 call_user_func($this->pset->grades_selection_function, $this);
             }
@@ -1207,25 +1282,43 @@ class PsetView {
         if ($ge->pcview_index !== null) {
             $this->_grades_vf[$ge->pcview_index] = 0;
             $this->_grades_suppressed |= 4;
+            $this->_gvf = null;
+            if (!$ge->answer && !$ge->no_total) {
+                $this->_gvf_scores = null;
+            }
         }
     }
 
-    /** @return list<GradeEntry> */
-    function visible_grades($pc_view = null) {
+    /** @param null|0|1|3|4|5|7 $vf
+     * @return list<GradeEntry> */
+    function visible_grades($vf = null) {
         if ($this->_grades_suppressed === 0) {
             $this->grades_vf(); // call the selection function
         }
+        $vf = $vf ?? ($this->pc_view ? VF_TF : $this->vf());
         if (($this->_grades_suppressed & 4) === 0
-            && ($pc_view ?? $this->pc_view)) {
-            return $this->pset->visible_grades(true);
+            && $vf >= VF_TF) {
+            return $this->pset->visible_grades(VF_TF);
         } else {
-            $f = $pc_view ?? $this->pc_view ? 2 : 1;
             $g = [];
-            foreach ($this->pset->visible_grades(true) as $i => $ge) {
-                if ($this->_grades_vf[$i] & $f)
+            foreach ($this->pset->visible_grades(VF_TF) as $i => $ge) {
+                if (($this->_grades_vf[$i] & $vf) !== 0)
                     $g[] = $ge;
             }
             return $g;
+        }
+    }
+
+    private function set_gvf() {
+        if ($this->_grades_suppressed === 0) {
+            $this->grades_vf(); // call the selection function
+        }
+        $this->_gvf = $this->_gvf_scores = 0;
+        foreach ($this->pset->visible_grades(VF_TF) as $i => $ge) {
+            $this->_gvf |= $this->_grades_vf[$i];
+            if (!$ge->answer && !$ge->no_total) {
+                $this->_gvf_scores |= $this->_grades_vf[$i];
+            }
         }
     }
 
@@ -1233,76 +1326,63 @@ class PsetView {
      * return ?GradeEntry */
     function gradelike_by_key($key) {
         $ge = $this->pset->gradelike_by_key($key);
-        if ($ge && $ge->pcview_index !== null) {
-            $f = $this->pc_view ? 2 : 1;
-            return ($this->grades_vf())[$ge->pcview_index] & $f ? $ge : null;
+        if (!$ge || $ge->pcview_index === null) {
+            return null;
+        }
+        $f = $this->pc_view ? VF_TF : $this->vf();
+        if ((($this->grades_vf())[$ge->pcview_index] & $f) !== 0) {
+            return $ge;
         } else {
             return null;
         }
     }
 
     /** @return bool */
-    function can_view_grade() {
+    function can_view_any_grade() {
+        return ($this->vf() & (VF_TF | VF_STUDENT_ALLOWED)) !== 0;
+    }
+
+    /** @return bool */
+    function can_view_some_grade() {
         if ($this->_can_view_grade === null) {
             if ($this->viewer->isPC && $this->viewer->can_view_pset($this->pset)) {
                 $this->_can_view_grade = true;
-            } else if ($this->user === $this->viewer) {
-                $this->_can_view_grade = $this->user_can_view_grade();
-            } else {
+            } else if (($vf = $this->vf()) === 0) {
                 $this->_can_view_grade = false;
+            } else {
+                if ($this->_gvf === null) {
+                    $this->set_gvf();
+                }
+                $this->_can_view_grade = ($vf & $this->_gvf) !== 0;
             }
         }
         return $this->_can_view_grade;
     }
 
-    /** @return ?bool */
-    function pinned_scores_visible() {
-        $xpi = $this->pset->gitless ? $this->upi() : $this->rpi();
-        if ($xpi && $xpi->hidegrade != 0) {
-            return $xpi->hidegrade < 0;
-        } else {
-            return null;
-        }
-    }
-
-    private function set_user_can_view_grade() {
-        $this->_user_can_view_grade = $this->_user_can_view_score = false;
-        if ($this->pset->student_can_view()
-            && ($this->pset->gitless_grades
-                || ($this->repo && $this->user_can_view_repo_contents()))) {
-            if (($this->pinned_scores_visible() ?? $this->pset->student_scores_visible())
-                || $this->pset->student_answers_editable()) {
-                foreach ($this->visible_grades(false) as $ge) {
-                    if ($ge->answer || $ge->concealed) {
-                        $this->_user_can_view_grade = true;
-                    } else {
-                        $this->_user_can_view_grade = $this->_user_can_view_score = true;
-                        return;
-                    }
-                }
-            }
-        }
+    /** @return bool */
+    function user_can_view_any_grade() {
+        return ($this->vf() & VF_STUDENT_ALLOWED) !== 0;
     }
 
     /** @return bool */
-    function user_can_view_grade() {
-        if ($this->_user_can_view_grade === null) {
-            $this->set_user_can_view_grade();
+    function user_can_view_some_grade() {
+        if ($this->_gvf === null) {
+            $this->set_gvf();
         }
-        return $this->_user_can_view_grade;
+        return ($this->vf() & $this->_gvf & ~VF_TF) !== 0;
     }
 
     /** @return bool */
-    function can_view_score() {
-        return $this->pc_view || $this->user_can_view_score();
+    function can_view_some_score() {
+        return $this->pc_view || $this->user_can_view_some_score();
     }
 
     /** @return bool */
-    function user_can_view_score() {
-        if ($this->_user_can_view_score === null) {
-            $this->set_user_can_view_grade();
+    function user_can_view_some_score() { /* NB: only for scores in total */
+        if ($this->_gvf_scores === null) {
+            $this->set_gvf();
         }
-        return $this->_user_can_view_score;
+        return ($this->vf() & $this->_gvf_scores & ~VF_TF) !== 0;
     }
 
     /** @return bool */
@@ -1315,7 +1395,7 @@ class PsetView {
         // also see GradeStatistics_API
         $gsv = $this->pset->grade_statistics_visible;
         return $gsv === 1
-            || ($gsv === 2 && $this->user_can_view_score())
+            || ($gsv === 2 && $this->user_can_view_any_grade())
             || ($gsv > 2 && $gsv <= Conf::$now);
     }
 
@@ -1328,24 +1408,49 @@ class PsetView {
 
     /** @return bool */
     function can_edit_grade() {
-        return $this->can_view_grade()
-            && ($this->pc_view || $this->pset->student_answers_editable());
+        return $this->can_view_some_grade()
+            && ($this->pc_view || $this->pset->answers_editable_student());
     }
 
     /** @return bool */
     function can_edit_scores() {
-        return $this->can_view_grade() && $this->pc_view;
+        return $this->can_view_some_grade() && $this->pc_view;
+    }
+
+    /** @param null|0|1|3|4|5|7 $vf
+     * @return ?int */
+    function timermark_timeout($vf) {
+        if (!$this->pset->has_timermark) {
+            return null;
+        }
+        $to = null;
+        $vf = $vf ?? $this->vf();
+        foreach ($this->visible_grades($vf) as $ge) {
+            if ($ge->type === "timermark"
+                && ($v0 = $this->grade_value($ge)) > 0) {
+                $t0 = $ge->timeout;
+                if ($ge->timeout_entry
+                    && ($ge1 = $this->gradelike_by_key($ge->timeout_entry))
+                    && ($t1 = $this->grade_value($ge1)) !== null) {
+                    $t0 = $t1;
+                }
+                if ($t0 && ($to === null || $v0 + $t0 < $to)) {
+                    $to = $v0 + $t0;
+                }
+            }
+        }
+        return $to;
     }
 
 
     /** @return bool */
     function can_view_repo_contents($cached = false) {
-        return $this->viewer->can_view_repo_contents($this->repo, $this->branch, $cached);
+        return $this->repo && $this->viewer->can_view_repo_contents($this->repo, $this->branch, $cached);
     }
 
     /** @return bool */
     function user_can_view_repo_contents($cached = false) {
-        return $this->user->can_view_repo_contents($this->repo, $this->branch, $cached);
+        return $this->repo && $this->user->can_view_repo_contents($this->repo, $this->branch, $cached);
     }
 
     /** @return bool */
@@ -1355,7 +1460,7 @@ class PsetView {
 
     /** @return \Generator<GradeEntry> */
     private function nonempty_visible_grades() {
-        if ($this->can_view_grade()) {
+        if ($this->can_view_some_grade()) {
             $this->ensure_grades();
             if ($this->_g !== null || $this->pset->has_formula) {
                 foreach ($this->visible_grades() as $ge) {
@@ -1391,7 +1496,7 @@ class PsetView {
 
     /** @return bool */
     function needs_answers()  {
-        if ($this->pset->has_answers && $this->can_view_grade()) {
+        if ($this->pset->has_answers && $this->can_view_some_grade()) {
             foreach ($this->nonempty_visible_grades() as $ge) {
                 if ($ge->answer) {
                     return false;
@@ -1439,7 +1544,7 @@ class PsetView {
 
     /** @param bool $force
      * @return ?int */
-    private function student_timestamp($force) {
+    function student_timestamp($force) {
         if ($this->pset->gitless) {
             return $this->vupi()->studentupdateat;
         } else if ($this->_hash
@@ -1955,25 +2060,30 @@ class PsetView {
     const GRADEJSON_NO_EDITABLE_ANSWERS = 32;
 
     /** @param int $flags
+     * @param ?list<0|4|5|7> $values_vf
      * @return ?GradeExport */
-    function grade_export($flags = 0) {
+    function grade_export($flags = 0, $values_vf = null) {
         $override_view = ($flags & self::GRADEJSON_OVERRIDE_VIEW) !== 0;
-        if (!$override_view && !$this->can_view_grade()) {
+        if (!$override_view && !$this->can_view_some_grade()) {
             return null;
         }
 
-        if ($flags & self::GRADEJSON_SLICE) {
-            $gexp = new GradeExport($this->pset, true);
-            $gexp->slice = true;
-        } else {
-            $gexp = new GradeExport($this->pset, $override_view || $this->pc_view);
-            $gexp->set_exported_entries($this->grades_vf());
+        $vf = $this->vf();
+        if ($override_view || ($flags & self::GRADEJSON_SLICE) !== 0) {
+            $vf |= VF_TF;
         }
-        if ($this->pset->grades_selection_function) {
-            $gexp->set_visible_grades($this->visible_grades());
-        }
+        $gexp = new GradeExport($this->pset, $vf);
         $gexp->uid = $this->user->contactId;
         $gexp->user = $this->user_linkpart();
+        if (($flags & self::GRADEJSON_SLICE) !== 0) {
+            $gexp->slice = true;
+        } else {
+            $gexp->export_entries();
+        }
+        $gexp->set_grades_vf($this->grades_vf());
+        if ($values_vf !== null) {
+            $gexp->set_fixed_values_vf($values_vf);
+        }
 
         $this->ensure_grades();
         if ($this->_g !== null || $this->is_grading_commit()) {
@@ -1990,7 +2100,7 @@ class PsetView {
             $gexp->commit = $this->hash();
         }
         if (!$this->pset->gitless_grades && !$this->is_grading_commit()) {
-            $gexp->grading_hash = $this->grading_hash();
+            $gexp->grade_commit = $this->grading_hash();
         }
         if (!($flags & self::GRADEJSON_NO_LATE_HOURS)) {
             $this->grade_export_late_hours($gexp);
@@ -2002,8 +2112,10 @@ class PsetView {
         if (($ts = $this->student_timestamp(false))) {
             $gexp->student_timestamp = $ts;
         }
-        if ($this->user_can_view_score()) {
-            $gexp->user_scores_visible = true;
+        if (($psv = $this->pinned_scores_visible()) !== null) {
+            $gexp->scores_visible = $psv;
+        } else if ($this->pset->scores_visible_student()) {
+            $gexp->scores_visible = true;
         }
         if ($this->can_edit_scores()) {
             $gexp->scores_editable = true;
@@ -2011,23 +2123,29 @@ class PsetView {
             $gexp->answers_editable = !$this->pset->frozen;
         }
         // maybe hide extra-credits that are missing
-        if (!$gexp->pc_view) {
-            $gexp->suppress_absent_extra();
+        if ($gexp->vf < VF_TF) {
+            $gexp->suppress_absent_extra_entries();
         }
         return $gexp;
     }
 
     function grade_export_grades(GradeExport $gexp) {
         $this->ensure_grades();
-        $gexp->grades = [];
-        $gexp->autogrades = $this->_ag !== null ? [] : null;
-        foreach ($gexp->value_entries() as $ge) {
-            $gv = $this->_g !== null ? $this->_g[$ge->pcview_index] : null;
-            $gexp->grades[] = $gv !== false ? $gv : null;
-            if ($this->_ag !== null) {
-                $gexp->autogrades[] = $this->_ag[$ge->pcview_index];
-            }
+        $vges = $gexp->value_entries();
+        $g = [];
+        foreach ($vges as $ge) {
+            $gv = $this->_g[$ge->pcview_index] ?? null;
+            $g[] = $gv !== false ? $gv : null;
         }
+        if ($this->_ag !== null) {
+            $ag = [];
+            foreach ($vges as $ge) {
+                $ag[] = $this->_ag[$ge->pcview_index];
+            }
+        } else {
+            $ag = null;
+        }
+        $gexp->set_grades_and_autogrades($g, $ag);
     }
 
     function grade_export_updates(GradeExport $gexp) {
@@ -2039,7 +2157,7 @@ class PsetView {
                 foreach ($gexp->value_entries() as $ge) {
                     if ($ge->answer
                         && ($jnn->{$ge->key} ?? null) !== ($jno->{$ge->key} ?? null)) {
-                        $gexp->student_grade_updates[$ge->key] = $jnn->{$ge->key};
+                        $gexp->grades_latest[$ge->key] = $jnn->{$ge->key};
                     }
                 }
             }
@@ -2063,8 +2181,7 @@ class PsetView {
                     $v = $this->_g !== null ? $this->_g[$ge->pcview_index] : null;
                     $v = $v ?? $this->grade_value($ge);
                     if ($v !== null) {
-                        $gexp->grades = $gexp->grades ?? $gexp->blank_values();
-                        $gexp->grades[$i] = $v;
+                        $gexp->set_grade($ge, $v);
                     }
                 }
             }
@@ -2099,8 +2216,8 @@ class PsetView {
         if (!$this->pset->gitless && $this->hash()) {
             $r["commit"] = $this->hash();
         }
-        if ($this->user_can_view_score()) {
-            $r["user_scores_visible"] = true;
+        if ($this->user_can_view_some_score()) { // any_score???
+            $r["scores_visible"] = true;
         }
         return $r;
     }
@@ -2108,7 +2225,7 @@ class PsetView {
 
     /** @return LineNotesOrder */
     function empty_line_notes() {
-        return new LineNotesOrder($this->can_view_grade(), $this->can_view_note_authors());
+        return new LineNotesOrder($this->can_view_any_grade(), $this->can_view_note_authors());
     }
 
     /** @return LineNotesOrder */
@@ -2375,8 +2492,8 @@ class PsetView {
         if ($this->viewer->email === "gtanzer@college.harvard.edu") {
             echo " garrett";
         }
-        if (!$this->user_can_view_grade()) {
-            echo " hidegrades";
+        if (($this->vf() & VF_STUDENT_ALLOWED) === 0) {
+            echo " pa-scores-hidden";
         }
         if (!$expand || !$dinfo->loaded) {
             echo " hidden";
@@ -2569,15 +2686,19 @@ class PsetView {
             $autext = [];
             foreach ($note->users as $au) {
                 if (($p = $pcmembers[$au] ?? null)) {
-                    if ($p->nicknameAmbiguous)
+                    if ($p->nicknameAmbiguous) {
                         $autext[] = Text::name_html($p);
-                    else
+                    } else {
                         $autext[] = htmlspecialchars($p->nickname ? : $p->firstName);
+                    }
                 }
             }
             if (!empty($autext)) {
                 echo '<div class="pa-note-author">[', join(", ", $autext), ']</div>';
             }
+        }
+        if (!$note->iscomment) {
+            echo '<div class="pa-gradenote-marker"></div>';
         }
         echo '<div class="pa-dr pa-note', ($note->iscomment ? ' pa-commentnote' : ' pa-gradenote');
         if (str_starts_with($note->ftext, "<")) {

@@ -1,38 +1,60 @@
 <?php
 // api/api_grade.php -- Peteramati API for grading
-// HotCRP and Peteramati are Copyright (c) 2006-2021 Eddie Kohler and others
+// HotCRP and Peteramati are Copyright (c) 2006-2022 Eddie Kohler and others
 // See LICENSE for open-source distribution terms
 
 class Grade_API {
-    /** @param array<string,string> &$errf
-     * @param bool $isnew
+    /** @var array<string,true|string> */
+    public $errf = [];
+    /** @var bool */
+    public $diff = false;
+
+
+    /** @param array<string,string> $j
+     * @return array<string,mixed> */
+    function error_json($j = []) {
+        assert(!empty($this->errf));
+        $j["ok"] = false;
+        if (isset($this->errf["!invalid"])) {
+            $j["error"] = "Invalid request.";
+        } else {
+            if (count($this->errf) === 1) {
+                $j["error"] = (array_values($this->errf))[0];
+            } else {
+                $j["error"] = "Invalid grades.";
+            }
+            $j["errf"] = $this->errf;
+        }
+        return $j;
+    }
+
+    /** @param bool $isnew
      * @return array */
-    static private function parse_full_grades(PsetView $info, $x, &$errf, $isnew) {
+    private function parse_full_grades(PsetView $info, $x, $isnew) {
         if (is_string($x)) {
             $x = json_decode($x, true);
             if (!is_array($x)) {
-                $errf["!invalid"] = true;
+                $this->errf["!invalid"] = true;
                 return [];
             }
         } else if (is_object($x)) {
-            $x = (array) $x;
+            $x = get_object_vars($x);
         } else if (!is_array($x)) {
             return [];
         }
         foreach ($x as $k => &$v) {
             if (($ge = $info->gradelike_by_key($k))) {
                 $v = $ge->parse_value($v, $isnew);
-                if ($v === false && !isset($errf[$k])) {
-                    $errf[$k] = $ge->parse_value_error();
+                if ($v instanceof GradeError && !isset($this->errf[$k])) {
+                    $this->errf[$k] = $v->message;
                 }
             }
         }
         return $x;
     }
 
-    /** @param PsetView $info
-     * @param array<string,string> &$errf */
-    static private function apply_grades($info, $g, $ag, $og, &$errf) {
+    /** @param PsetView $info */
+    private function apply_grades($info, $g, $ag, $og) {
         $v = [];
         foreach ($info->pset->grades() as $ge) {
             $k = $ge->key;
@@ -41,7 +63,7 @@ class Grade_API {
                 if ($ge->value_differs($oldgv, $og[$k])
                     && (!array_key_exists($k, $g)
                         || $ge->value_differs($oldgv, $g[$k]))) {
-                    $errf[$k] = "Edit conflict.";
+                    $this->errf[$k] = "Edit conflict.";
                 }
             }
             $has_agv = false;
@@ -58,32 +80,46 @@ class Grade_API {
                     && isset($notes->autogrades)) {
                     $agv = $notes->autogrades->$k ?? null;
                 }
-                if ($ge->allow_edit($gv, $oldgv, $agv, $info)) {
-                    $v["grades"][$k] = $gv ?? (isset($agv) ? false : null);
+                if ($agv === false) {
+                    $agv = null;
+                }
+                if ($gv === null) {
+                    $gv = $agv;
+                } else if ($gv === false && $agv === null) {
+                    $gv = null;
+                }
+                $allowed = $ge->allow_edit($gv, $oldgv, $agv, $info);
+                if ($allowed === true) {
+                    $v["grades"][$k] = $gv;
                     if ($ge->answer) {
                         $v["linenotes"]["/g/{$ge->key}"] = null;
                     }
+                    $this->diff = $this->diff || $ge->value_differs($gv, $oldgv);
                 } else {
-                    $errf[$k] = $ge->parse_value_error();
+                    $this->errf[$k] = $allowed->message;
                 }
             }
         }
-        if (array_key_exists("late_hours", $g)
-            && $info->pc_view // XXX separate permission check?
-            && ($gv = GradeEntry::parse_numeric_value($g["late_hours"])) !== false) {
-            $curlhd = $info->late_hours_data() ? : (object) [];
-            $lh = $curlhd->hours ?? 0;
-            $alh = $curlhd->autohours ?? $lh;
-            if (isset($og["late_hours"])
-                && ($ogv = GradeEntry::parse_numeric_value($og["late_hours"])) !== null
-                && $ogv !== false
-                && abs($ogv - $lh) >= 0.0001) {
-                $errf["late_hours"] = true;
-            } else if ($gv === null
-                       || abs($gv - $alh) < 0.0001) {
-                $v["late_hours"] = null;
+        if (array_key_exists("late_hours", $g) && $info->pc_view) {
+            // XXX separate permission check?
+            $gv = GradeEntry::parse_numeric_value($g["late_hours"]);
+            $ogv = isset($og["late_hours"]) ? GradeEntry::parse_numeric_value($og["late_hours"]) : null;
+            if ($gv instanceof GradeError) {
+                $this->errf["late_hours"] = $gv->message;
             } else {
-                $v["late_hours"] = $gv;
+                $curlhd = $info->late_hours_data() ? : (object) [];
+                $lh = $curlhd->hours ?? 0;
+                $alh = $curlhd->autohours ?? $lh;
+                if ($ogv
+                    && !($ogv instanceof GradeError)
+                    && abs($ogv - $lh) >= 0.0001) {
+                    $this->errf["late_hours"] = true;
+                } else if ($gv === null
+                           || abs($gv - $alh) < 0.0001) {
+                    $v["late_hours"] = null;
+                } else {
+                    $v["late_hours"] = $gv;
+                }
             }
         }
         return $v;
@@ -95,6 +131,7 @@ class Grade_API {
             return $err;
         }
         $known_entries = $qreq->knowngrades ? explode(" ", $qreq->knowngrades) : null;
+        $gapi = new Grade_API;
         // XXX match commit with grading commit
         if ($qreq->is_post()) {
             if (!$qreq->valid_post()) {
@@ -108,35 +145,31 @@ class Grade_API {
             }
 
             // parse grade elements
-            $errf = [];
-            $g = self::parse_full_grades($info, $qreq->get_a("grades"), $errf, true);
-            $ag = self::parse_full_grades($info, $qreq->get_a("autogrades"), $errf, false);
-            $og = self::parse_full_grades($info, $qreq->get_a("oldgrades"), $errf, false);
-            if (!empty($errf)) {
-                if (isset($errf["!invalid"])) {
-                    return ["ok" => false, "error" => "Invalid request."];
-                } else {
-                    reset($errf);
-                    return ["ok" => false, "error" => (count($errf) === 1 ? current($errf) : "Invalid grades."), "errf" => $errf];
-                }
+            $g = $gapi->parse_full_grades($info, $qreq->get_a("grades"), true);
+            $ag = $gapi->parse_full_grades($info, $qreq->get_a("autogrades"), false);
+            $og = $gapi->parse_full_grades($info, $qreq->get_a("oldgrades"), false);
+            if (!empty($gapi->errf)) {
+                return $gapi->error_json();
             }
 
             // assign grades
-            $v = self::apply_grades($info, $g, $ag, $og, $errf);
-            if (!empty($errf)) {
-                $j = (array) $info->grade_json(0, $known_entries);
-                $j["ok"] = false;
-                reset($errf);
-                $j["error"] = current($errf);
-                return $j;
+            $v = $gapi->apply_grades($info, $g, $ag, $og);
+            if (!empty($gapi->errf)) {
+                return $gapi->error_json((array) $info->grade_json(0, $known_entries));
             } else if (!empty($v)) {
                 $info->update_grade_notes($v);
             }
-        } else if (!$info->can_view_grade()) {
+        } else if (!$info->can_view_some_grade()) {
             return ["ok" => false, "error" => "Permission error."];
         }
         $j = (array) $info->grade_json(0, $known_entries);
         $j["ok"] = true;
+        if ($gapi->diff
+            && !$info->pc_view
+            && ($to = $info->timermark_timeout(null))
+            && $to < Conf::$now) {
+            $j["answer_timeout"] = true;
+        }
         return $j;
     }
 
@@ -205,7 +238,7 @@ class Grade_API {
         foreach ($sset as $uid => $info) {
             // XXX extract the following into a function
             // XXX branch nonsense
-            if (!$info->can_view_grade()
+            if (!$info->can_view_some_grade()
                 || ($qreq->is_post() && !$info->can_edit_scores())) {
                 return ["ok" => false, "error" => "Permission error for user " . $info->user_linkpart() . "."];
             }
@@ -247,34 +280,30 @@ class Grade_API {
         }
 
         // XXX match commit with grading commit
-        $gexp = new GradeExport($api->pset, true);
-        $gexp->set_exported_entries(null);
+        $gexp = new GradeExport($api->pset);
+        $gexp->export_entries();
         $jx = $gexp->jsonSerialize();
         $jx["ok"] = true;
         if ($qreq->is_post()) {
             // parse grade elements
-            $g = $ag = $og = $errf = [];
+            $g = $ag = $og = [];
+            $gapi = new Grade_API;
             foreach ($sset as $uid => $info) {
                 $gx = $ugs[$uid];
-                $g[$uid] = self::parse_full_grades($info, $gx->grades ?? null, $errf, true);
-                $ag[$uid] = self::parse_full_grades($info, $gx->autogrades ?? null, $errf, false);
-                $og[$uid] = self::parse_full_grades($info, $gx->oldgrades ?? null, $errf, false);
+                $g[$uid] = $gapi->parse_full_grades($info, $gx->grades ?? null, true);
+                $ag[$uid] = $gapi->parse_full_grades($info, $gx->autogrades ?? null, false);
+                $og[$uid] = $gapi->parse_full_grades($info, $gx->oldgrades ?? null, false);
             }
-            if (!empty($errf)) {
-                reset($errf);
-                if (isset($errf["!invalid"])) {
-                    return ["ok" => false, "error" => "Invalid request."];
-                } else {
-                    return ["ok" => false, "error" => (count($errf) === 1 ? current($errf) : "Invalid grades."), "errf" => $errf];
-                }
+            if (!empty($gapi->errf)) {
+                return $gapi->error_json();
             }
 
             // assign grades
             $v = [];
             foreach ($ugs as $uid => $gx) {
-                $v[$uid] = self::apply_grades($sset[$uid], $g[$uid], $ag[$uid], $og[$uid], $errf);
+                $v[$uid] = $gapi->apply_grades($sset[$uid], $g[$uid], $ag[$uid], $og[$uid]);
             }
-            if (!empty($errf)) {
+            if (!empty($gapi->errf)) {
                 $jx["ok"] = false;
                 $jx["error"] = "Grade edit conflict, your update was ignored.";
             } else {
@@ -291,13 +320,55 @@ class Grade_API {
         return $jx;
     }
 
+    /** @param PsetView $info
+     * @param ?StudentSet $sset */
+    static private function gradesettings1($ug, $info, &$old_pset, $sset) {
+        $pset = $info->pset;
+        if (property_exists($ug, "scores_visible")
+            && ($pset->gitless_grades || $info->repo)) {
+            $info->set_pinned_scores_visible($ug->scores_visible);
+        }
+        if (isset($ug->gradercid)
+            && ($pset->gitless_grades || $info->repo)) {
+            if (!$pset->gitless_grades && !$info->grading_hash()) {
+                $info->repo->refresh(2700, true);
+                $info->set_latest_nontrivial_commit($sset);
+                if ($info->hash()) {
+                    $info->mark_grading_commit();
+                }
+            }
+            if ($pset->gitless_grades || $info->hash()) {
+                $info->change_grader($ug->gradercid);
+            }
+        }
+        if ((($ug->clearrepo ?? false) || ($ug->adoptoldrepo ?? false))
+            && !$pset->gitless) {
+            if (($ug->clearrepo ?? false) && $info->repo) {
+                $info->user->set_repo($pset, null);
+                $info->user->clear_links(LINK_BRANCH, $pset->id);
+                $info->reload_repo();
+            }
+            if (($ug->adoptoldrepo ?? false) && !$info->repo) {
+                $old_pset = $old_pset ?? PsetConfig_API::older_enabled_repo_same_handout($pset);
+                $old_repo = $old_pset ? $info->user->repo($old_pset->id) : null;
+                if ($old_repo) {
+                    $info->user->set_repo($pset, $old_repo);
+                    if (($b = $info->user->branchid($old_pset))) {
+                        $info->user->set_link(LINK_BRANCH, $old_pset->id, $b);
+                    }
+                    $info->reload_repo();
+                }
+            }
+        }
+    }
+
     static function gradesettings(Contact $viewer, Qrequest $qreq, APIData $api) {
         if (($ugs = self::parse_users($qreq->us)) === null) {
-            return ["ok" => false, "error" => "Missing parameter."];
+            return ["ok" => false, "error" => "Missing parameter"];
         } else if ($qreq->is_post() && !$qreq->valid_post()) {
-            return ["ok" => false, "error" => "Missing credentials."];
+            return ["ok" => false, "error" => "Missing credentials"];
         } else if (!$viewer->privChair) {
-            return ["ok" => false, "error" => "Permission error."];
+            return ["ok" => false, "error" => "Permission error"];
         }
         try {
             $sset = self::student_set(array_keys($ugs), $viewer, $api);
@@ -306,7 +377,7 @@ class Grade_API {
             return ["ok" => false, "error" => $err->getMessage()];
         }
         if (count($sset) === 0) {
-            return ["ok" => false, "error" => "No users."];
+            return ["ok" => false, "error" => "No users"];
         }
 
         // XXX match commit with grading commit
@@ -314,36 +385,24 @@ class Grade_API {
         if ($qreq->is_post()) {
             foreach ($sset as $uid => $info) {
                 $ug = $ugs[$uid];
-                if (isset($ug->pinned_scores_visible)
-                    && !is_bool($ug->pinned_scores_visible)) {
-                    return ["ok" => false, "error" => "Invalid request."];
+                if (isset($ug->scores_visible) && !is_bool($ug->scores_visible)) {
+                    return ["ok" => false, "error" => "Invalid `scores_visible` request"];
                 }
                 if (isset($ug->gradercid)
                     && (!is_int($ug->gradercid)
                         || ($ug->gradercid !== 0 && !isset($pcm[$ug->gradercid])))) {
-                    return ["ok" => false, "error" => "Invalid request."];
+                    return ["ok" => false, "error" => "Invalid `gradercid` request"];
+                }
+                if (isset($ug->clearrepo) && !is_bool($ug->clearrepo)) {
+                    return ["ok" => false, "error" => "Invalid `clearrepo` request"];
+                }
+                if (isset($ug->adoptoldrepo) && !is_bool($ug->adoptoldrepo)) {
+                    return ["ok" => false, "error" => "Invalid `adoptoldrepo` request"];
                 }
             }
+            $old_pset = null;
             foreach ($sset as $uid => $info) {
-                $ug = $ugs[$uid];
-                if (!$api->pset->gitless_grades && !$info->repo) {
-                    continue;
-                }
-                if (property_exists($ug, "pinned_scores_visible")) {
-                    $info->set_pinned_scores_visible($ug->pinned_scores_visible);
-                }
-                if (isset($ug->gradercid)) {
-                    if (!$api->pset->gitless_grades && !$info->grading_hash()) {
-                        $info->repo->refresh(2700, true);
-                        $info->set_latest_nontrivial_commit($sset);
-                        if ($info->hash()) {
-                            $info->mark_grading_commit();
-                        }
-                    }
-                    if ($api->pset->gitless_grades || $info->hash()) {
-                        $info->change_grader($ug->gradercid);
-                    }
-                }
+                self::gradesettings1($ugs[$uid], $info, $old_pset, $sset);
             }
         }
         $j = ["ok" => true, "us" => []];
@@ -356,7 +415,7 @@ class Grade_API {
             } else {
                 $j["us"][] = [
                     "uid" => $uid,
-                    "pinned_scores_visible" => $info->pinned_scores_visible(),
+                    "scores_visible" => $info->pinned_scores_visible(),
                     "gradercid" => $info->gradercid()
                 ];
             }

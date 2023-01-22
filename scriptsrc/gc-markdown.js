@@ -3,7 +3,7 @@
 // See LICENSE for open-source distribution terms
 
 import { GradeClass } from "./gc.js";
-import { render_text } from "./render.js";
+import { render_onto } from "./render.js";
 import { hasClass, addClass, removeClass, handle_ui } from "./ui.js";
 import { Filediff } from "./diff.js";
 import { Note } from "./note.js";
@@ -27,17 +27,34 @@ GradeClass.add("markdown", {
     },
     mount_edit: function (elt, id) {
         addClass(elt, "pa-textv");
-        return '<p class="pa-preview-notice"><span>Markdown styling and LaTeX math supported · </span><a href="" class="ui js-toggle-gc-markdown-preview" tabindex="-1">Preview</a></p><textarea class="uich pa-gradevalue need-autogrow" name="'.concat(this.key, '" id="', id, '"></textarea>');
+        const descspan = document.createElement("span");
+        descspan.append("Markdown styling and LaTeX math supported · ");
+        const desclink = document.createElement("a");
+        desclink.href = "";
+        desclink.className = "ui js-toggle-gc-markdown-preview";
+        desclink.tabIndex = -1;
+        desclink.append("Preview");
+        const descp = document.createElement("p");
+        descp.className = "pa-preview-notice";
+        descp.append(descspan, desclink);
+        const ta = document.createElement("textarea");
+        ta.className = "uich pa-gradevalue need-autogrow";
+        ta.name = this.key;
+        ta.id = id;
+        ta.disabled = this.disabled;
+        const df = new DocumentFragment;
+        df.append(descp, ta);
+        return df;
     },
     update_show: function (ve, v, opts) {
         if (v == null || v === "") {
-            ve.innerHTML = "";
+            ve.replaceChildren();
         } else if (this.answer) {
             const gi = opts.gradesheet;
             addClass(ve, "bg-none");
             addClass(ve, "align-self-start");
             const div = document.createElement("div");
-            div.className = "pa-filediff pa-dg pa-hide-left pa-hide-landmarks uim" + (gi.scores_editable ? " pa-editablenotes live" : "");
+            div.className = "pa-filediff pa-dg pa-hide-left pa-hide-landmarks uim" + (gi.scores_editable ? " pa-editablenotes live" : "") + (gi.scores_visible ? "" : " pa-scores-hidden");
             let fileid = "/g/" + this.key;
             div.id = gi.file_anchor(fileid);
             let pos1 = 0, lineno = 1;
@@ -74,9 +91,9 @@ GradeClass.add("markdown", {
                 }
             }
         } else if (hasClass(ve.parentElement, "pa-markdown")) {
-            render_text(1, v, ve);
+            render_onto(ve, 1, v);
         } else {
-            render_text(0, v, ve);
+            render_onto(ve, 0, v);
         }
         return ve.firstChild === null;
     },
@@ -92,7 +109,7 @@ handle_ui.on("js-toggle-gc-markdown-preview", function () {
         ta.parentElement.removeChild(ta.previousSibling);
         removeClass(ta, "hidden");
         ta.focus();
-        this.innerHTML = "Preview";
+        this.textContent = "Preview";
         removeClass(this.previousSibling, "hidden");
     } else {
         const div = document.createElement("div"),
@@ -105,8 +122,8 @@ handle_ui.on("js-toggle-gc-markdown-preview", function () {
         div.append(hr1, inner, hr2);
         ta.parentElement.insertBefore(div, ta);
         addClass(ta, "hidden");
-        render_text(1, ta.value, inner);
-        this.innerHTML = "Edit";
+        render_onto(inner, 1, ta.value);
+        this.textContent = "Edit";
         addClass(this.previousSibling, "hidden");
     }
 });

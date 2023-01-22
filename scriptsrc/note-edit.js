@@ -9,7 +9,7 @@ import { event_key, event_modkey } from "./ui-key.js";
 import { Linediff } from "./diff.js";
 import { Note } from "./note.js";
 import { GradeSheet } from "./gradeentry.js";
-import { ftext } from "./render.js";
+import { ftext, render_onto } from "./render.js";
 import { tooltip } from "./tooltip.js";
 
 
@@ -54,7 +54,7 @@ function render_form($tr, note, transition) {
         '<div class="aabutr order-100"><button class="btn-primary" type="submit">Save comment</button></div>',
         '<div class="aabutr order-99"><button type="button" name="cancel">Cancel</button></div>',
         '<div class="aabut"><button type="button" class="btn ui pa-load-note-suggestions">↡</button></div>');
-    if (!gi.user_scores_visible) {
+    if (!gi.scores_visible) {
         t += '<div class="aabut"><label class="checki"><input type="checkbox" name="iscomment" value="1" class="checkc">Show immediately</label></div>';
     }
     t += '<div class="aabut flex-grow-1"></div>';
@@ -197,7 +197,7 @@ function pa_linenote(event) {
     if (event.button !== 0
         || !dl
         || hasClass(dl, "pa-gx")
-        || event.target.matches("button, a, textarea")
+        || event.target.matches("button, a, textarea, input, label")
         || event.target.closest(".pa-note-suggestions")) {
         return;
     }
@@ -300,7 +300,7 @@ function display_note_suggestions(form, ns) {
         b2.className = "ui pa-use-suggestion dislike".concat(mf < 0 ? " taken" : "");
         b2.setAttribute("aria-label", "Downrank");
         b2.textContent = "➖";
-        ftext.render(n.ftext, tx);
+        render_onto(tx, "f", n.ftext);
         tooltip.call(b1);
         tooltip.call(b2);
     }

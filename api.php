@@ -47,9 +47,9 @@ class APIRequest {
             $user = $this->conf->user_by_whatever($this->qreq->u);
             if (!$this->viewer->isPC
                 && (!$user || $user->contactId !== $this->viewer->contactId)) {
-                return ["ok" => false, "error" => "User permission error."];
+                return ["ok" => false, "error" => "Permission denied"];
             } else if (!$user) {
-                return ["ok" => false, "error" => "No such user."];
+                return ["ok" => false, "error" => "User not found"];
             } else {
                 $user->set_anonymous(substr($this->qreq->u, 0, 5) === "[anon");
                 $api->user = $user;
@@ -59,16 +59,16 @@ class APIRequest {
         // check pset
         if ($this->qreq->pset
             && !($api->pset = $this->conf->pset_by_key($this->qreq->pset))) {
-            return ["ok" => false, "error" => "No such pset."];
+            return ["ok" => false, "error" => "Pset not found"];
         }
-        if ($api->pset && $api->pset->disabled) {
+        if ($api->pset && $api->pset->disabled && !$this->viewer->privChair) {
             if ($this->viewer->isPC) {
-                return ["ok" => false, "error" => "Pset disabled."];
+                return ["ok" => false, "error" => "Pset disabled"];
             } else {
-                return ["ok" => false, "error" => "No such pset."];
+                return ["ok" => false, "error" => "Pset not found"];
             }
         } else if ($api->pset && !$api->pset->visible && !$this->viewer->isPC) {
-            return ["ok" => false, "error" => "No such pset."];
+            return ["ok" => false, "error" => "Pset not found"];
         }
 
         // check commit
@@ -91,6 +91,12 @@ class APIRequest {
             $uf = $this->conf->config->_api->{$this->qreq->fn} ?? null;
         }
         if ($uf
+            && $api->pset
+            && $api->pset->disabled
+            && !($uf->anypset ?? false)) {
+            return ["ok" => false, "error" => "Pset disabled"];
+        }
+        if ($uf
             && ($uf->redirect ?? false)
             && $this->qreq->redirect
             && preg_match('/\A(?![a-z]+:|\/).+/', $this->qreq->redirect)) {
@@ -104,7 +110,7 @@ class APIRequest {
                 $j = $j->content;
             }
             if (!($j->ok ?? false) && !($j->error ?? false)) {
-                Conf::msg_error("Internal error.");
+                Conf::msg_error("Internal error");
             } else if (($x = $j->error ?? false)) {
                 Conf::msg_error(htmlspecialchars($x));
             } else if (($x = $j->error_html ?? false)) {

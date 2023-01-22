@@ -2,7 +2,7 @@
 // Peteramati is Copyright (c) 2006-2021 Eddie Kohler
 // See LICENSE for open-source distribution terms
 
-import { addClass, handle_ui } from "./ui.js";
+import { addClass, handle_ui, input_set_default_value } from "./ui.js";
 import { event_key } from "./ui-key.js";
 import { strftime, sec2text } from "./utils.js";
 
@@ -17,19 +17,31 @@ export const GradeClass = {
     basic_text: v => (v == null ? "" : "" + v),
 
     basic_mount_edit: function (elt, id, opts) {
-        let x;
+        let sp = document.createElement("span");
+        sp.className = "pa-gradedesc";
         if (opts && opts.max_text) {
-            x = opts.max_text;
+            sp.append(opts.max_text);
         } else if (this.max) {
-            x = 'of ' + this.max;
-        } else {
-            x = '';
+            sp.append('of ' + this.max);
         }
+        const df = new DocumentFragment;
+        let e;
         if (window.$pa.long_page) {
-            return '<textarea class="ta1 uich pa-gradevalue pa-gradewidth" name="'.concat(this.key, '" id="', id, '" rows="1" wrap="none" cols="10000"></textarea> <span class="pa-gradedesc">', x, '</span>');
+            e = document.createElement("textarea");
+            e.className = "ta1 uich pa-gradevalue pa-gradewidth";
+            e.setAttribute("rows", 1);
+            e.setAttribute("cols", 10000);
+            e.setAttribute("wrap", "none");
         } else {
-            return '<input type="text" class="uich pa-gradevalue pa-gradewidth" name="'.concat(this.key, '" id="', id, '"> <span class="pa-gradedesc">', x, '</span>');
+            e = document.createElement("input");
+            e.type = "text";
+            e.className = "uich pa-gradevalue pa-gradewidth";
         }
+        e.name = this.key;
+        e.id = id;
+        e.disabled = this.disabled;
+        df.append(e, " ", sp);
+        return df;
     },
 
     basic_mount_show: function (elt, id) {
@@ -44,24 +56,27 @@ export const GradeClass = {
         elt.replaceChildren(...es);
     },
 
+    basic_unmount: function (elt) {
+        elt.remove();
+    },
+
     basic_update_edit: function (elt, v, opts) {
         const ve = elt.querySelector(".pa-gradevalue"),
             gt = this.simple_text(v);
-        if ($(ve).val() !== gt && (opts.reset || !$(ve).is(":focus"))) {
-            $(ve).val(gt);
-        }
+        input_set_default_value(ve, gt);
+        ve.value = gt;
         if (opts.mixed != null) {
             opts.mixed ? ve.setAttribute("placeholder", "Mixed") : ve.removeAttribute("placeholder");
         }
     },
 
-    basic_configure_column: function (col, pconf) {
+    basic_configure_column: function (col) {
         col.ge = this;
         col.gabbr = this.abbr();
         col.justify = this.gc.justify || "right";
         col.sort_forward = this.gc.sort === "forward";
         const justify = this.gc.justify || "right";
-        col.className = (col.gkey === pconf.total_key ? "gt-total" : "gt-grade") +
+        col.className = (col.gkey === col.ptconf.total_key ? "gt-total" : "gt-grade") +
             (justify === "left" ? " l" : " r");
         if (this.table_color && color_map[this.table_color]) {
             col.className += " " + color_map[this.table_color];
@@ -106,6 +121,7 @@ export const GradeClass = {
         x.mount_show = x.mount_show || GradeClass.basic_mount_show;
         x.mount_edit = x.mount_edit || GradeClass.basic_mount_edit;
         x.update_edit = x.update_edit || GradeClass.basic_update_edit;
+        x.unmount = x.unmount || GradeClass.basic_unmount;
         map[name] = x;
     },
 
@@ -145,7 +161,7 @@ GradeClass.add("duration", {
         if (v == null) {
             return "";
         } else {
-            return sec2text(v);
+            return sec2text(v, "quarterhour");
         }
     }
 });
@@ -158,7 +174,12 @@ GradeClass.add("text", {
     },
     mount_edit: function (elt, id) {
         addClass(elt, "pa-textv");
-        return '<textarea class="uich pa-gradevalue need-autogrow" name="'.concat(this.key, '" id="', id, '"></textarea>');
+        const ta = document.createElement("textarea");
+        ta.className = "uich pa-gradevalue need-autogrow";
+        ta.name = this.key;
+        ta.id = id;
+        ta.disabled = this.disabled;
+        return ta;
     },
     justify: "left",
     sort: "forward",
@@ -171,7 +192,13 @@ GradeClass.add("shorttext", {
         addClass(elt, "pa-gradevalue");
     },
     mount_edit: function (elt, id) {
-        return '<textarea class="uich pa-gradevalue need-autogrow" rows="1" name="'.concat(this.key, '" id="', id, '"></textarea>');
+        const ta = document.createElement("textarea");
+        ta.className = "uich pa-gradevalue need-autogrow";
+        ta.setAttribute("rows", 1);
+        ta.name = this.key;
+        ta.id = id;
+        ta.disabled = this.disabled;
+        return ta;
     },
     justify: "left",
     sort: "forward",
@@ -188,6 +215,9 @@ GradeClass.add("section", {
         addClass(elt.closest(".pa-p"), "pa-p-section");
     },
     update_show: function () {
+        return false;
+    },
+    update_edit: function () {
         return false;
     },
     type_tabular: false

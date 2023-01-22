@@ -240,6 +240,19 @@ class GitHub_RepositorySite extends RepositorySite {
     function friendly_url() {
         return $this->base ? : $this->url;
     }
+    /** @return list<string> */
+    function credentialed_git_command() {
+        if (($id = $this->conf->opt("githubOAuthClientId"))
+            && ($token = $this->conf->opt("githubOAuthToken"))
+            && $token !== Conf::INVALID_TOKEN) {
+            return [
+                "git", "-c", "credential.helper=",
+                "-c", "credential.helper=!f () { echo username={$id}; echo password={$token}; }; f"
+            ];
+        } else {
+            return ["false"];
+        }
+    }
     function owner_name() {
         if (preg_match('{\A([^/"\\\\]+)/([^/"\\\\]+)\z}', $this->base, $m))
             return [$m[1], $m[2]];
@@ -256,24 +269,24 @@ class GitHub_RepositorySite extends RepositorySite {
     }
 
     function gitfetch($repoid, $cacheid, $foreground) {
-        if (($id = $this->conf->opt("githubOAuthClientId"))
-            && ($token = $this->conf->opt("githubOAuthToken"))
-            && $token !== Conf::INVALID_TOKEN) {
-            putenv("GIT_USERNAME=$id");
-            putenv("GIT_PASSWORD=$token");
-            $command = escapeshellarg(SiteLoader::$root . "/src/gitfetch")
-                . " -m " . escapeshellarg($this->conf->default_main_branch)
-                . " $repoid $cacheid " . escapeshellarg($this->https_url())
-                . " 1>&2" . ($foreground ? "" : " &");
-            shell_exec($command);
-            putenv("GIT_USERNAME");
-            putenv("GIT_PASSWORD");
-            return true;
-        } else {
+        if (!$this->conf->opt("githubOAuthClientId")
+            || !($token = $this->conf->opt("githubOAuthToken"))
+            || $token === Conf::INVALID_TOKEN) {
             return false;
         }
+        $arg = $foreground ? [] : ["--bg"];
+        $php = $this->conf->opt("phpCommand") ?? "php";
+        $sp = Subprocess::run([
+            $php, "batch/repofetch.php", "-r", $repoid, ...$arg
+        ], SiteLoader::$root);
+        if (!$sp->ok) {
+            error_log("`php batch/repofetch.php -r {$repoid}` failed: {$sp->status}, {$sp->stderr}");
+        }
+        return true;
     }
-    function validate_open(MessageSet $ms = null) {
+
+    /** @return -1|0|1 */
+    function validate_open() {
         if (!($owner_name = $this->owner_name())) {
             return -1;
         }
@@ -284,16 +297,16 @@ class GitHub_RepositorySite extends RepositorySite {
             error_log(json_encode($gql));
             return -1;
         } else if ($gql->rdata->repository == null) {
-            $ms && $ms->error_at("open", $this->expand_message("repo_nonexistent", $ms->user));
             return 1;
         } else if (!$gql->rdata->repository->isPrivate) {
-            $ms && $ms->error_at("open", $this->expand_message("repo_toopublic", $ms->user));
             return 1;
         } else {
             return 0;
         }
     }
-    function validate_working(MessageSet $ms = null) {
+
+    /** @return -1|0|1 */
+    function validate_working(Contact $user, MessageSet $ms = null) {
         $status = RepositorySite::run_remote_oauth($this->conf,
             $this->conf->opt("githubOAuthClientId"),
             $this->conf->opt("githubOAuthToken"),
@@ -301,21 +314,29 @@ class GitHub_RepositorySite extends RepositorySite {
             $output);
         $answer = join("\n", $output);
         if ($status >= 124) { // timeout
-            $status = -1;
+            return -1;
         } else if (!preg_match('/\A[0-9a-f]{40,}\s+/', $answer)) {
-            $ms && $ms->error_at("working", $this->expand_message("repo_unreadable", $ms->user));
-            $status = 0;
+            if ($ms) {
+                $ms->error_at("repo", $this->expand_message("repo_unreadable", $user));
+                $ms->error_at("working");
+            }
+            return 0;
         } else if (!preg_match('/^[0-9a-f]{40,}\s+refs\/heads\/(?:' . $this->conf->default_main_branch . '|master|main)/m', $answer)) {
-            $ms && $ms->error_at("working", $this->expand_message("repo_nomaster", $ms->user));
-            $status = 0;
+            if ($ms) {
+                $ms->error_at("repo", $this->expand_message("repo_nomaster", $user));
+                $ms->error_at("working");
+            }
+            return 0;
         } else {
-            $status = 1;
+            return 1;
         }
-        return $status;
     }
+
     function validate_ownership_always() {
         return false;
     }
+
+    /** @return -1|0|1 */
     function validate_ownership(Repository $repo, Contact $user, Contact $partner = null,
                                 MessageSet $ms = null) {
         if (!$user->github_username

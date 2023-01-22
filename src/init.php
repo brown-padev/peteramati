@@ -19,6 +19,11 @@ const HASNOTES_GRADE = 1;
 const HASNOTES_COMMENT = 2;
 const HASNOTES_ANY = 3;
 
+const VF_STUDENT_ALWAYS = 1;
+const VF_STUDENT_ALLOWED = 2;
+const VF_STUDENT_ANY = 3;
+const VF_TF = 4;
+
 global $OK;
 $OK = 1;
 
@@ -33,6 +38,10 @@ require_once(SiteLoader::find("src/helpers.php"));
 require_once(SiteLoader::find("src/conference.php"));
 require_once(SiteLoader::find("src/contact.php"));
 Conf::set_current_time(time());
+if (PHP_SAPI === "cli") {
+    set_exception_handler("Multiconference::batch_exception_handler");
+    pcntl_signal(SIGPIPE, SIG_DFL);
+}
 
 
 // Set locale to C (so that, e.g., strtolower() on UTF-8 data doesn't explode)
@@ -173,14 +182,14 @@ function load_psets_json($exclude_overrides) {
     $json = (object) ["_defaults" => (object) []];
     foreach ($datamap as $fname => $data) {
         if ($data === false) {
-            Multiconference::fail_message("$fname: Required configuration file cannot be read.");
+            Multiconference::fail_message("{$fname}: Required configuration file cannot be read.");
         }
         $x = json_decode($data);
         if (!$x) {
             Json::decode($data); // our JSON decoder provides error positions
-            Multiconference::fail_message("$fname: Invalid JSON. " . Json::last_error_msg());
+            Multiconference::fail_message("{$fname}: Invalid JSON. " . Json::last_error_msg());
         } else if (!is_object($x)) {
-            Multiconference::fail_message("$fname: Not a JSON object.");
+            Multiconference::fail_message("{$fname}: Not a JSON object.");
         }
         object_replace_recursive($json, $x);
     }

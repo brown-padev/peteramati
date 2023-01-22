@@ -143,8 +143,9 @@ class CS61Mailer extends Mailer {
         }
         if ($what == "%GRADEENTRIES%") {
             $info = $this->get_pset_info();
-            if (!$info->can_view_grade())
+            if (!$info->can_view_some_grade()) {
                 return $isbool ? false : "";
+            }
             $t = "";
             $total = $maxtotal = 0; // XXX better computation
             foreach ($this->pset->grades as $ge) {
@@ -215,7 +216,7 @@ class CS61Mailer extends Mailer {
 }
 
 // load mail templates, including local ones if any
-global $ConfSitePATH, $Opt;
-require_once("$ConfSitePATH/src/mailtemplate.php");
-if ((@include "$ConfSitePATH/conf/mailtemplate-local.php") !== false)
+global $Opt;
+require_once(SiteLoader::$root . "/src/mailtemplate.php");
+if ((@include (SiteLoader::$root . "/conf/mailtemplate-local.php")) !== false)
     /* do nothing */;

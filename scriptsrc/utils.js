@@ -172,18 +172,35 @@ export function strftime(fmt, d) {
     return t;
 }
 
-export function sec2text(s) {
-    if (s >= 3600 && s % 900 == 0) {
-        return (s / 3600) + "h";
-    } else if (s >= 3600) {
-        s = Math.round(s / 60);
-        return sprintf("%dh%dm", s / 60, s % 60);
-    } else if (s > 360) {
-        return sprintf("%dm", Math.round(s / 60));
-    } else {
-        s = Math.round(s);
-        return sprintf("%dm%ds", s / 60, s % 60);
+export function sec2text(s, style) {
+    s = Math.round(s);
+    if (s > -60 && s < 60) {
+        return s + "s";
     }
+    let t = s < 0 ? "-" : "";
+    s = Math.abs(s);
+    if (s >= 3600) {
+        if (s % 900 === 0 && style === "quarterhour") {
+            t = t.concat(s / 3600, "h");
+            s = 0;
+        } else {
+            const h = Math.floor(s / 3600);
+            t = t.concat(h, "h");
+            s -= h * 3600;
+            if (s < 60) {
+                t += "0m";
+            }
+        }
+    }
+    if (s >= 60) {
+        const m = Math.floor(s / 60);
+        t = t.concat(m, "m");
+        s -= m * 60;
+    }
+    if (s !== 0) {
+        t = t.concat(s, "s");
+    }
+    return t;
 }
 
 
@@ -230,6 +247,12 @@ if (!String.prototype.trimStart) {
     };
 }
 
+if (!Object.hasOwn) {
+    Object.defineProperty(Object, "hasOwn", {
+        value: Object.prototype.hasOwnProperty, configurable: true, writable: true
+    });
+}
+
 
 export class ImmediatePromise {
     constructor(value) {
@@ -268,4 +291,37 @@ export function text_eq(a, b) {
         b = (b == null ? "" : b).replace(/\r\n?/g, "\n");
         return a === b;
     }
+}
+
+
+export function string_utf8_index(str, index) {
+    let r = 0, m, n;
+    while (str && index > 0) {
+        // eslint-disable-next-line no-control-regex
+        m = str.match(/^([\x00-\x7F]*)([\u0080-\u07FF]*)([\u0800-\uD7FF\uE000-\uFFFF]*)((?:[\uD800-\uDBFF][\uDC00-\uDFFF])*)/);
+        if (!m)
+            break;
+        if (m[1].length) {
+            n = Math.min(index, m[1].length);
+            r += n;
+            index -= n;
+        }
+        if (m[2].length) {
+            n = Math.min(index, m[2].length * 2);
+            r += n / 2;
+            index -= n;
+        }
+        if (m[3].length) {
+            n = Math.min(index, m[3].length * 3);
+            r += n / 3;
+            index -= n;
+        }
+        if (m[4].length) {
+            n = Math.min(index, m[4].length * 2);
+            r += n / 2; // surrogate pairs
+            index -= n;
+        }
+        str = str.substring(m[0].length);
+    }
+    return r;
 }
