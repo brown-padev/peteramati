@@ -1189,6 +1189,12 @@ class QueueItem {
         $client = new ContainerServiceClient($req);
         if ($client->submit_job()) {
             // check status periodically
+            $resp = $client->wait_for_completion();
+            if ($resp->status === "success") {
+                $this->debug($resp->results);
+            } else {
+                $this->debug($resp->message);
+            }
         }
     }
 

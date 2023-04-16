@@ -46,15 +46,16 @@ class ContainerServiceClient {
 
     private function debug($content) {
         $path = "/home/tdong6/debug.txt";
-        // open with write and append
         $handle = fopen($path, "a");
         fwrite($handle, $content . "\n");
         fclose($handle);
     }
 
-    private function request($endpoint, $method, $content) {
+    private function request($endpoint, $method, $content = "") {
         $url = $this->baseHost . $endpoint;
-        $content = json_encode($content);
+        if ($content !== "") {
+            $content = json_encode($content);
+        }
         $htopt = [
             "method" => $method,
             "header" => "Content-Type: application/json",
@@ -101,7 +102,19 @@ class ContainerServiceClient {
         return false;
     }
 
-    function wait_for_completion() {
+    private function check_status(): string {
+        $this->request("/jobs/" . $this->jobId, "GET");
+        return $this->response->status;
+    }
 
+    function wait_for_completion() {
+        // block until check_status() returns "completed"
+        while (1) {
+            // TODO: exponential backoff
+            sleep(5);
+            if ($this->check_status() === "success" || $this->check_status() === "failed") {
+                return $this->response;
+            }
+        }
     }
 }
