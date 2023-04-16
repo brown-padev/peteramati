@@ -24,8 +24,6 @@ class JobRequest {
 }
 
 class ContainerServiceClient {
-    /** @var string */
-    public $url = "http://localhost:8000/jobs/"; // https://cs1680.cs.brown.edu/pa-container-service/jobs/
     /** @var int */
     public $status = 509;
     /** @var string */
@@ -38,8 +36,9 @@ class ContainerServiceClient {
     public $response;
     /** @var ?object */
     public $rdata;
-    public $jobReq;
-    public $jobId;
+    private $baseHost = "http://localhost:8000"; // https://cs1680.cs.brown.edu/pa-container-service
+    private $jobReq;
+    private $jobId;
 
     function __construct(JobRequest $req) {
         $this->jobReq = $req;
@@ -53,27 +52,16 @@ class ContainerServiceClient {
         fclose($handle);
     }
 
-    private function run_post($content_type, $content, $header = "") {
-        if (is_array($content) || is_object($content)) {
-            if ($content_type === "application/x-www-form-urlencoded") {
-                $content = (array) $content;
-                $content = join("&", array_map(function ($k, $v) {
-                    return urlencode($k) . "=" . urlencode($v);
-                }, array_keys($content), array_values($content)));
-            } else if ($content_type === "application/json") {
-                $content = json_encode($content);
-            } else {
-                throw new Error();
-            }
-        }
-        $header .= "Content-Type: $content_type\r\n";
+    private function request($endpoint, $method, $content) {
+        $url = $this->baseHost . $endpoint;
+        $content = json_encode($content);
         $htopt = [
-            "method" => "POST",
-            "header" => $header,
+            "method" => $method,
+            "header" => "Content-Type: application/json",
             "content" => $content
         ];
         $context = stream_context_create(array("http" => $htopt));
-        if (($stream = fopen($this->url, "r", false, $context))) {
+        if (($stream = fopen($url, "r", false, $context))) {
             if (
                 ($metadata = stream_get_meta_data($stream))
                 && ($w = $metadata["wrapper_data"] ?? null)
@@ -105,7 +93,7 @@ class ContainerServiceClient {
     }
 
     function submit_job(): bool {
-        $this->run_post("application/json", $this->jobReq);
+        $this->request("/jobs", "POST", $this->jobReq);
         if ($this->response->jobID) {
             $this->jobId = $this->response->jobID;
             return true;
@@ -113,7 +101,7 @@ class ContainerServiceClient {
         return false;
     }
 
-    function check_job_status(string $jobID) {
+    function wait_for_completion() {
 
     }
 }
