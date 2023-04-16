@@ -10,6 +10,8 @@ class SiteLoader {
         "CsvParser" => "lib/csv.php",
         "Function_GradeFormula" => "src/gradeformula.php",
         "GitHubResponse" => "src/github_repositorysite.php",
+        "ContainerServiceClient" => "src/container_service.php",
+        "SubmitJobRequest" => "src/container_service.php",
         "LoginHelper" => "lib/login.php",
         "MessageItem" => "lib/messageset.php",
         "MimeText" => "lib/mailer.php",

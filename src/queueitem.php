@@ -963,6 +963,9 @@ class QueueItem {
         // check out code
         $this->checkout_code();
 
+        // use container service
+        $this->use_container_service();
+
         // save commit settings
         $this->add_run_settings($this->runsettings ?? []);
 
@@ -1137,6 +1140,22 @@ class QueueItem {
         if (($overlay = $runner->overlay())) {
             $this->checkout_overlay($checkoutdir, $overlay);
         }
+    }
+
+    private function debug($content) {
+        $path = "/home/tdong6/debug.txt";
+        // open with write and append
+        $handle = fopen($path, "a");
+        fwrite($handle, $content . "\n");
+        fclose($handle);
+    }
+
+    private function use_container_service() {
+        $token = $this->conf->opt("githubOAuthToken");
+
+        $req = new SubmitJobRequest("snowcast", "serverTests", $token, "brown-csci1680", "snowcast-jennyyu212", "main", "1");
+        $client = new ContainerServiceClient();
+        $client->submit_job($req);
     }
 
     /** @param string $checkoutdir
