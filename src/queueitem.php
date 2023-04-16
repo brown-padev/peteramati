@@ -1185,9 +1185,11 @@ class QueueItem {
     private function use_container_service() {
         $token = $this->conf->opt("githubOAuthToken");
 
-        $req = new SubmitJobRequest("snowcast", "serverTests", $token, "brown-csci1680", "snowcast-jennyyu212", "main", "1");
-        $client = new ContainerServiceClient();
-        $client->submit_job($req);
+        $req = new JobRequest("snowcast", "serverTests", $token, "brown-csci1680", "snowcast-jennyyu212", "main", "1");
+        $client = new ContainerServiceClient($req);
+        if ($client->submit_job()) {
+            // check status periodically
+        }
     }
 
     private function add_run_settings($s) {

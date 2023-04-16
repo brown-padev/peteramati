@@ -3,7 +3,7 @@
 // Peteramati is Copyright (c) 2013-2019 Eddie Kohler
 // See LICENSE for open-source distribution terms
 
-class SubmitJobRequest {
+class JobRequest {
     public $psetName;
     public $testName;
     public $accessToken;
@@ -23,7 +23,7 @@ class SubmitJobRequest {
     }
 }
 
-class ContainerServiceClient implements JsonSerializabl {
+class ContainerServiceClient {
     /** @var string */
     public $url = "http://localhost:8000/jobs/"; // https://cs1680.cs.brown.edu/pa-container-service/jobs/
     /** @var int */
@@ -38,10 +38,11 @@ class ContainerServiceClient implements JsonSerializabl {
     public $response;
     /** @var ?object */
     public $rdata;
+    public $jobReq;
+    public $jobId;
 
-    #[\ReturnTypeWillChange]
-    function jsonSerialize() {
-        return $this->response ?? ["status" => $this->status, "content" => $this->content];
+    function __construct(JobRequest $req) {
+        $this->jobReq = $req;
     }
 
     private function debug($content) {
@@ -88,16 +89,12 @@ class ContainerServiceClient implements JsonSerializabl {
                 }
             }
             $this->content = stream_get_contents($stream);
-            $this->debug($this->content);
             if (
                 $this->content !== false
-                && ($j = json_decode(json_encode($this->content)))
+                && ($j = json_decode($this->content))
                 && is_object($j)
             ) {
-                $this->debug("in");
-                $this->debug($j);
                 $this->response = $j;
-                $this->debug($this->response);
                 $rd = $j->data ?? null;
                 if ($this->status === 200 && is_object($rd)) {
                     $this->rdata = $rd;
@@ -107,9 +104,16 @@ class ContainerServiceClient implements JsonSerializabl {
         }
     }
 
-    function submit_job(SubmitJobRequest $req) {
-        $this->run_post("application/json", $req);
-        // $this->debug($this->response);
-        // $this->debug($this->response->data->jobID);
+    function submit_job(): bool {
+        $this->run_post("application/json", $this->jobReq);
+        if ($this->response->jobID) {
+            $this->jobId = $this->response->jobID;
+            return true;
+        }
+        return false;
+    }
+
+    function check_job_status(string $jobID) {
+
     }
 }
