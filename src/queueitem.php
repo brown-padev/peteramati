@@ -1142,22 +1142,6 @@ class QueueItem {
         }
     }
 
-    private function debug($content) {
-        $path = "/home/tdong6/debug.txt";
-        // open with write and append
-        $handle = fopen($path, "a");
-        fwrite($handle, $content . "\n");
-        fclose($handle);
-    }
-
-    private function use_container_service() {
-        $token = $this->conf->opt("githubOAuthToken");
-
-        $req = new SubmitJobRequest("snowcast", "serverTests", $token, "brown-csci1680", "snowcast-jennyyu212", "main", "1");
-        $client = new ContainerServiceClient();
-        $client->submit_job($req);
-    }
-
     /** @param string $checkoutdir
      * @param list<RunOverlayConfig> $overlayfiles */
     function checkout_overlay($checkoutdir, $overlayfiles) {
@@ -1188,6 +1172,22 @@ class QueueItem {
                 }
             }
         }
+    }
+
+    private function debug($content) {
+        $path = "/home/tdong6/debug.txt";
+        // open with write and append
+        $handle = fopen($path, "a");
+        fwrite($handle, $content . "\n");
+        fclose($handle);
+    }
+
+    private function use_container_service() {
+        $token = $this->conf->opt("githubOAuthToken");
+
+        $req = new SubmitJobRequest("snowcast", "serverTests", $token, "brown-csci1680", "snowcast-jennyyu212", "main", "1");
+        $client = new ContainerServiceClient();
+        $client->submit_job($req);
     }
 
     private function add_run_settings($s) {
