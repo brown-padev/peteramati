@@ -1196,7 +1196,11 @@ class QueueItem {
         $this->debug("test: " . $testname);
         $this->debug("pset: " . $psetname);
 
-        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, "main", "1");
+        $info = PsetView::make($this->pset(), $this->user(), $this->user());
+        $commit = $info->commit_hash();
+        $this->debug("commit: " . $commit);
+
+        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, "1");
         $client = new ContainerServiceClient($req);
         if ($client->submit_job()) {
             // check status periodically
