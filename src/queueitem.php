@@ -1200,7 +1200,13 @@ class QueueItem {
         $commit = $info->commit_hash();
         $this->debug("commit: " . $commit);
 
-        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, "1");
+        $user = $this->user();
+        // TODO: verify user id
+        $userid = (string) $user->contactId;
+        $this->debug("user id: " . $userid);        
+        $this->debug("user email: " . $user->email);
+
+        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid);
         $client = new ContainerServiceClient($req);
         if ($client->submit_job()) {
             // check status periodically
