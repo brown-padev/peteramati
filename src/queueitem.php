@@ -1183,13 +1183,25 @@ class QueueItem {
     }
 
     private function use_container_service() {
+        $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
+        $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
+        $repoUrl = explode("/", $repoUrl);
+        $orgName = $repoUrl[0];
+        $repoName = $repoUrl[1];
         $token = $this->conf->opt("githubOAuthToken");
 
-        $req = new JobRequest("snowcast", "serverTests", $token, "brown-csci1680", "snowcast-jennyyu212", "main", "1");
+        $runner = $this->runner();
+        $testname = $runner->name; // e.g. snowcastmilestone
+        $psetname = $this->pset()->key; // e.g. snowcast, the key field in psets_config.json
+        $this->debug("test: " . $testname);
+        $this->debug("pset: " . $psetname);
+
+        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, "main", "1");
         $client = new ContainerServiceClient($req);
         if ($client->submit_job()) {
             // check status periodically
             $resp = $client->wait_for_completion();
+            $this->debug($resp->status);
             if ($resp->status === "success") {
                 $this->debug($resp->results);
             } else {
