@@ -2,15 +2,16 @@
 // helpers.php -- HotCRP non-class helper functions
 // Copyright (c) 2006-2021 Eddie Kohler; see LICENSE.
 
-function ago($t) {
+function ago($t)
+{
     if ($t + 60 >= Conf::$now)
         return "less than a minute ago";
     else if ($t + 7200 >= Conf::$now)
-        return plural((int)((Conf::$now - $t) / 60 + 0.5), "minute") . " ago";
+        return plural((int) ((Conf::$now - $t) / 60 + 0.5), "minute") . " ago";
     else if ($t + 259200 >= Conf::$now)
-        return plural((int)((Conf::$now - $t) / 3600 + 0.5), "hour") . " ago";
+        return plural((int) ((Conf::$now - $t) / 3600 + 0.5), "hour") . " ago";
     else
-        return plural((int)((Conf::$now - $t) / 86400 + 0.5), "day") . " ago";
+        return plural((int) ((Conf::$now - $t) / 86400 + 0.5), "day") . " ago";
 }
 
 
@@ -18,7 +19,8 @@ function ago($t) {
 
 /** @param null|int|string $value
  * @return int */
-function cvtint($value, $default = -1) {
+function cvtint($value, $default = -1)
+{
     $v = trim((string) $value);
     if (is_numeric($v)) {
         $ival = intval($v);
@@ -31,7 +33,8 @@ function cvtint($value, $default = -1) {
 
 /** @param null|int|float|string $value
  * @return int|float */
-function cvtnum($value, $default = -1) {
+function cvtnum($value, $default = -1)
+{
     $v = trim((string) $value);
     if (is_numeric($v)) {
         return floatval($v);
@@ -39,26 +42,32 @@ function cvtnum($value, $default = -1) {
     return $default;
 }
 
-function rcvtint(&$value, $default = -1) {
+function rcvtint(&$value, $default = -1)
+{
     return (isset($value) ? cvtint($value, $default) : $default);
 }
 
 
-interface JsonIsReplacement {
+interface JsonIsReplacement
+{
 }
 
-class JsonReplacement implements JsonSerializable, JsonIsReplacement {
+class JsonReplacement implements JsonSerializable, JsonIsReplacement
+{
     private $x;
-    function __construct($x) {
+    function __construct($x)
+    {
         $this->x = $x;
     }
     #[\ReturnTypeWillChange]
-    function jsonSerialize() {
+    function jsonSerialize()
+    {
         return $this->x;
     }
 }
 
-function json_update($j, $updates) {
+function json_update($j, $updates)
+{
     if (is_object($j)) {
         $j = get_object_vars($j);
     } else if (!is_array($j)) {
@@ -104,7 +113,8 @@ function json_update($j, $updates) {
 
 /** @param mixed $j
  * @return bool */
-function is_json_null_update($j) {
+function is_json_null_update($j)
+{
     if (is_object($j) || is_associative_array($j)) {
         if (is_object($j)) {
             $j = get_object_vars($j);
@@ -119,7 +129,8 @@ function is_json_null_update($j) {
     }
 }
 
-function json_antiupdate($j, $updates) {
+function json_antiupdate($j, $updates)
+{
     if (is_object($j)) {
         $j = get_object_vars($j);
     } else if (!is_array($j)) {
@@ -171,7 +182,8 @@ function json_antiupdate($j, $updates) {
 
 // web helpers
 
-function hoturl_add_raw($url, $component) {
+function hoturl_add_raw($url, $component)
+{
     if (($pos = strpos($url, "#")) !== false) {
         $component .= substr($url, $pos);
         $url = substr($url, 0, $pos);
@@ -180,42 +192,48 @@ function hoturl_add_raw($url, $component) {
 }
 
 /** @deprecated */
-function hoturl($page, $param = null) {
+function hoturl($page, $param = null)
+{
     return Conf::$main->hoturl($page, $param);
 }
 
 
-function file_uploaded(&$var) {
+function file_uploaded(&$var)
+{
     global $Conf;
     if (!isset($var) || ($var['error'] != UPLOAD_ERR_OK && !$Conf))
         return false;
     switch ($var['error']) {
-    case UPLOAD_ERR_OK:
-        return is_uploaded_file($var['tmp_name'])
-            || (PHP_SAPI === "cli" && ($var["tmp_name_safe"] ?? false));
-    case UPLOAD_ERR_NO_FILE:
-        return false;
-    case UPLOAD_ERR_INI_SIZE:
-    case UPLOAD_ERR_FORM_SIZE:
-        $Conf->errorMsg("You tried to upload a file that’s too big for our system to accept.  The maximum size is " . ini_get("upload_max_filesize") . "B.");
-        return false;
-    case UPLOAD_ERR_PARTIAL:
-        $Conf->errorMsg("You appear to have interrupted the upload process; I am not storing that file.");
-        return false;
-    default:
-        $Conf->errorMsg("Internal upload error " . $var['error'] . "!");
-        return false;
+        case UPLOAD_ERR_OK:
+            return is_uploaded_file($var['tmp_name'])
+                || (PHP_SAPI === "cli" && ($var["tmp_name_safe"] ?? false));
+        case UPLOAD_ERR_NO_FILE:
+            return false;
+        case UPLOAD_ERR_INI_SIZE:
+        case UPLOAD_ERR_FORM_SIZE:
+            $Conf->errorMsg("You tried to upload a file that’s too big for our system to accept.  The maximum size is " . ini_get("upload_max_filesize") . "B.");
+            return false;
+        case UPLOAD_ERR_PARTIAL:
+            $Conf->errorMsg("You appear to have interrupted the upload process; I am not storing that file.");
+            return false;
+        default:
+            $Conf->errorMsg("Internal upload error " . $var['error'] . "!");
+            return false;
     }
 }
 
-class JsonResult {
+class JsonResult
+{
     /** @var ?int */
     public $status;
     /** @var array<string,mixed> */
     public $content;
     public $has_messages = false;
 
-    function __construct($values = null) {
+    function __construct($values = null)
+    {
+        debug("values");
+        debug($values);
         if (is_int($values)) {
             $this->status = $values;
             if (func_num_args() === 2) {
@@ -244,7 +262,8 @@ class JsonResult {
             $this->content = $values;
         }
     }
-    static function make($json, Contact $user = null, $arg2 = null) {
+    static function make($json, Contact $user = null, $arg2 = null)
+    {
         if (is_int($json)) {
             $json = new JsonResult($json, $arg2);
         } else if (!is_object($json) || !($json instanceof JsonResult)) {
@@ -255,14 +274,19 @@ class JsonResult {
         }
         return $json;
     }
-    function take_messages(Contact $user, $div = false) {
-        if (session_id() !== ""
-            && ($msgs = $user->session("msgs", []))) {
+    function take_messages(Contact $user, $div = false)
+    {
+        if (
+            session_id() !== ""
+            && ($msgs = $user->session("msgs", []))
+        ) {
             $user->save_session("msgs", null);
             $t = "";
             foreach ($msgs as $msg) {
-                if (($msg[1] === "merror" || $msg[1] === "xmerror")
-                    && !isset($this->content["error"])) {
+                if (
+                    ($msg[1] === "merror" || $msg[1] === "xmerror")
+                    && !isset($this->content["error"])
+                ) {
                     $this->content["error"] = $msg[0];
                 }
                 if ($div) {
@@ -277,7 +301,8 @@ class JsonResult {
             $this->has_messages = true;
         }
     }
-    function export_errors() {
+    function export_errors()
+    {
         if (isset($this->content["error"])) {
             Conf::msg_error($this->content["error"]);
         }
@@ -286,22 +311,35 @@ class JsonResult {
                 Ht::error_at($f);
         }
     }
-}
-
-class JsonResultException extends Exception {
+}class JsonResultException extends Exception
+{
     /** @var JsonResult */
     public $result;
     /** @var bool */
     static public $capturing = false;
     /** @param JsonResult $j */
-    function __construct($j) {
+    function __construct($j)
+    {
         $this->result = $j;
     }
 }
 
-function json_exit($json, $arg2 = null) {
+function debug($content)
+{
+    $path = "/home/tdong6/debug.txt";
+    // open with write and append
+    ob_start();
+    var_dump($content);
+    $output = ob_get_clean();
+    $handle = fopen($path, "a");
+    fwrite($handle, $output . "\n");
+    fclose($handle);
+}
+
+function json_exit($json, $arg2 = null)
+{
     global $Me, $Qreq;
-    $json = JsonResult::make($json, $Me ? : null, $arg2);
+    $json = JsonResult::make($json, $Me ?: null, $arg2);
     if (JsonResultException::$capturing) {
         throw new JsonResultException($json);
     } else {
@@ -329,7 +367,8 @@ function json_exit($json, $arg2 = null) {
     }
 }
 
-function foldbutton($foldtype, $title, $foldnum = 0) {
+function foldbutton($foldtype, $title, $foldnum = 0)
+{
     $showtitle = ($title ? " title='" . htmlspecialchars("Show $title") . "'" : "");
     $hidetitle = ($title ? " title='" . htmlspecialchars("Hide $title") . "'" : "");
     $foldclass = ($foldnum ? $foldnum : "");
@@ -340,13 +379,15 @@ function foldbutton($foldtype, $title, $foldnum = 0) {
 /** @param string|Contact $link
  * @param string $text
  * @return string */
-function become_user_link($link, $text = "user") {
+function become_user_link($link, $text = "user")
+{
     $link = is_object($link) ? $link->email : $link;
     return "<a class=\"actas\" href=\"" . Conf::$main->selfurl(null, ["actas" => $link]) . "\">"
         . Conf::$main->cacheableImage("viewas.png", "[Become user]", "Act as " . htmlspecialchars($text)) . "</a>";
 }
 
-function highlightMatch($match, $text, &$n = null) {
+function highlightMatch($match, $text, &$n = null)
+{
     if ($match == "") {
         $n = 0;
         return $text;
@@ -356,7 +397,8 @@ function highlightMatch($match, $text, &$n = null) {
     return preg_replace($match, "<span class='match'>\$1</span>", $text, -1, $n);
 }
 
-function decorateNumber($n) {
+function decorateNumber($n)
+{
     if ($n < 0)
         return "&minus;" . (-$n);
     else if ($n > 0)
@@ -366,30 +408,35 @@ function decorateNumber($n) {
 }
 
 
-function rm_rf_tempdir($tempdir) {
+function rm_rf_tempdir($tempdir)
+{
     assert(substr($tempdir, 0, 1) === "/");
     exec("/bin/rm -rf " . escapeshellarg($tempdir));
 }
 
-function clean_tempdirs() {
-    $dir = sys_get_temp_dir() ? : "/";
+function clean_tempdirs()
+{
+    $dir = sys_get_temp_dir() ?: "/";
     while (substr($dir, -1) === "/") {
         $dir = substr($dir, 0, -1);
     }
     $dirh = opendir($dir);
     $now = time();
     while (($fname = readdir($dirh)) !== false) {
-        if (preg_match('/\Ahotcrptmp\d+\z/', $fname)
+        if (
+            preg_match('/\Ahotcrptmp\d+\z/', $fname)
             && is_dir("$dir/$fname")
             && ($mtime = @filemtime("$dir/$fname")) !== false
-            && $mtime < $now - 1800)
+            && $mtime < $now - 1800
+        )
             rm_rf_tempdir("$dir/$fname");
     }
     closedir($dirh);
 }
 
-function tempdir($mode = 0700) {
-    $dir = sys_get_temp_dir() ? : "/";
+function tempdir($mode = 0700)
+{
+    $dir = sys_get_temp_dir() ?: "/";
     while (substr($dir, -1) === "/") {
         $dir = substr($dir, 0, -1);
     }
@@ -406,12 +453,13 @@ function tempdir($mode = 0700) {
 /** @param string $subdir
  * @param int $mode
  * @return bool */
-function mk_site_subdir($subdir, $mode) {
+function mk_site_subdir($subdir, $mode)
+{
     $pos = 0;
     do {
         $oldpos = $pos;
         assert($subdir[$pos] === "/");
-        $pos = strpos($subdir, "/", $pos + 1) ? : strlen($subdir);
+        $pos = strpos($subdir, "/", $pos + 1) ?: strlen($subdir);
         $path = SiteLoader::$root . substr($subdir, 0, $pos);
         if (!is_dir($path)) {
             if (!mkdir($path, $mode)) {
@@ -420,8 +468,10 @@ function mk_site_subdir($subdir, $mode) {
             chmod($path, $mode);
             if ($oldpos === 0) {
                 $s = file_get_contents(SiteLoader::$root . "/src/.htaccess");
-                if ($s === false
-                    || file_put_contents("{$path}/.htaccess", $s) !== strlen($s)) {
+                if (
+                    $s === false
+                    || file_put_contents("{$path}/.htaccess", $s) !== strlen($s)
+                ) {
                     return false;
                 }
             }
@@ -432,7 +482,8 @@ function mk_site_subdir($subdir, $mode) {
 
 
 // text helpers
-function commajoin($what, $joinword = "and") {
+function commajoin($what, $joinword = "and")
+{
     $what = array_values($what);
     $c = count($what);
     if ($c == 0) {
@@ -446,13 +497,15 @@ function commajoin($what, $joinword = "and") {
     }
 }
 
-function prefix_commajoin($what, $prefix, $joinword = "and") {
+function prefix_commajoin($what, $prefix, $joinword = "and")
+{
     return commajoin(array_map(function ($x) use ($prefix) {
         return $prefix . $x;
     }, $what), $joinword);
 }
 
-function numrangejoin($range) {
+function numrangejoin($range)
+{
     $a = [];
     $format = $first = $last = null;
     $intval = $plen = 0;
@@ -491,22 +544,26 @@ function numrangejoin($range) {
     return commajoin($a);
 }
 
-function pluralx($n, $what) {
+function pluralx($n, $what)
+{
     if (is_array($n)) {
         $n = count($n);
     }
     return $n === 1 ? $what : pluralize($what);
 }
 
-function pluralize($what) {
+function pluralize($what)
+{
     if ($what === "this") {
         return "these";
     } else if ($what === "has") {
         return "have";
     } else if ($what === "is") {
         return "are";
-    } else if (str_ends_with($what, ")")
-               && preg_match('/\A(.*?)(\s*\([^)]*\))\z/', $what, $m)) {
+    } else if (
+        str_ends_with($what, ")")
+        && preg_match('/\A(.*?)(\s*\([^)]*\))\z/', $what, $m)
+    ) {
         return pluralize($m[1]) . $m[2];
     } else if (preg_match('/\A.*?(?:s|sh|ch|[bcdfgjklmnpqrstvxz]y)\z/', $what)) {
         if (substr($what, -1) === "y") {
@@ -519,11 +576,13 @@ function pluralize($what) {
     }
 }
 
-function plural($n, $what) {
+function plural($n, $what)
+{
     return (is_array($n) ? count($n) : $n) . ' ' . pluralx($n, $what);
 }
 
-function ordinal($n) {
+function ordinal($n)
+{
     $x = $n;
     if ($x > 100) {
         $x = $x % 100;
@@ -534,7 +593,8 @@ function ordinal($n) {
     return $n . ($x < 1 || $x > 3 ? "th" : ($x == 1 ? "st" : ($x == 2 ? "nd" : "rd")));
 }
 
-function tabLength($text, $all) {
+function tabLength($text, $all)
+{
     $len = 0;
     for ($i = 0; $i < strlen($text); ++$i) {
         if ($text[$i] === ' ') {
@@ -553,7 +613,8 @@ function tabLength($text, $all) {
 
 // Aims to return a random password string with at least
 // `$length * 5` bits of entropy.
-function hotcrp_random_password($length = 14) {
+function hotcrp_random_password($length = 14)
+{
     // XXX it is possible to correctly account for loss of entropy due
     // to use of consonant pairs; I have only estimated
     $bytes = random_bytes($length + 12);
@@ -592,7 +653,8 @@ function hotcrp_random_password($length = 14) {
 }
 
 
-function encode_token($x, $format = "") {
+function encode_token($x, $format = "")
+{
     $s = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     $t = "";
     if (is_int($x)) {
@@ -621,7 +683,8 @@ function encode_token($x, $format = "") {
     }
 }
 
-function decode_token($x, $format = "") {
+function decode_token($x, $format = "")
+{
     $map = "//HIJKLMNO///////01234567/89:;</=>?@ABCDEFG";
     $t = "";
     $n = $have = 0;
@@ -630,7 +693,7 @@ function decode_token($x, $format = "") {
         $o = ord($x[$i]);
         if ($o >= 48 && $o <= 90 && ($out = ord($map[$o - 48])) >= 48) {
             $o = $out - 48;
-        } else if ($o === 46 /*.*/ || $o === 34 /*"*/) {
+        } else if ($o === 46 /*.*/|| $o === 34 /*"*/) {
             continue;
         } else {
             return false;
@@ -653,7 +716,8 @@ function decode_token($x, $format = "") {
     }
 }
 
-function git_refname_is_full_hash($refname) {
+function git_refname_is_full_hash($refname)
+{
     return strlen($refname) === 40
         && ctype_xdigit($refname)
         && strtolower($refname) === $refname;
@@ -661,13 +725,15 @@ function git_refname_is_full_hash($refname) {
 
 /** @param null|int|float $g
  * @return ?float */
-function round_grade($g) {
+function round_grade($g)
+{
     return $g !== null ? round($g * 1000) / 1000 : null;
 }
 
 /** @param int|float $t
  * @return string */
-function unparse_interval($t) {
+function unparse_interval($t)
+{
     $s = "";
     if ($t < 0) {
         $s .= "-";

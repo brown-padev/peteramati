@@ -55,14 +55,60 @@ class RunRequest {
 
     static function go(Contact $user, Qrequest $qreq) {
         $rreq = new RunRequest($user, $qreq);
+        // self::debug($qreq);
+        // self::debug("run request!");
+        // self::debug($rreq);
+
         if ($qreq->runmany) {
             $rreq->runmany();
         } else if ($qreq->download) {
             $rreq->download();
         } else {
-            json_exit($rreq->run());
+            $res = $rreq->run();
+            // self::debug("res!");
+            // self::debug($res);
+            json_exit($res);
+            // json_exit($rreq->run());
         }
     }
+
+    // private function use_container_service() {
+        // $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
+        // $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
+        // $repoUrl = explode("/", $repoUrl);
+        // $orgName = $repoUrl[0];
+        // $repoName = $repoUrl[1];
+        // $token = $this->conf->opt("githubOAuthToken");
+
+        // $runner = $this->runner();
+        // $testname = $runner->name; // e.g. snowcastmilestone
+        // $psetname = $this->pset()->key; // e.g. snowcast, the key field in psets_config.json
+        // $this->debug("test: " . $testname);
+        // $this->debug("pset: " . $psetname);
+
+        // $info = PsetView::make($this->pset(), $this->user(), $this->user());
+        // $commit = $info->commit_hash();
+        // $this->debug("commit: " . $commit);
+
+        // $user = $this->user();
+        // // TODO: verify user id
+        // $userid = (string) $user->contactId;
+        // $this->debug("user id: " . $userid);        
+        // $this->debug("user email: " . $user->email);
+
+        // $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid);
+        // $client = new ContainerServiceClient($req);
+        // if ($client->submit_job()) {
+        //     // check status periodically
+        //     $resp = $client->wait_for_completion();
+        //     $this->debug($resp->status);
+        //     if ($resp->status === "success") {
+        //         $this->debug($resp->results);
+        //     } else {
+        //         $this->debug($resp->message);
+        //     }
+        // }
+    // }
 
     /** @param bool $many
      * @return ?string */
@@ -78,6 +124,17 @@ class RunRequest {
         } else {
             return null;
         }
+    }
+
+    static function debug($content) {
+        $path = "/home/tdong6/debug.txt";
+        // open with write and append
+        ob_start();
+        var_dump($content);
+        $output = ob_get_clean();
+        $handle = fopen($path, "a");
+        fwrite($handle, $output . "\n");
+        fclose($handle);
     }
 
     function run() {

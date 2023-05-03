@@ -6,6 +6,7 @@
         "build": "rollup -c"
     },
     "dependencies": {
+        "16": "^0.0.2",
         "linkify-it": "latest",
         "markdown-it": "latest",
         "markdown-it-katexx": "^3.2.0",

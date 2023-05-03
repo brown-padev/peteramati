@@ -16,11 +16,11 @@ function make_xterm_write_handler(write) {
                 if ((mod & 0xE) === 0 && event_key.printable(event)) {
                     // keep `key`
                 } else if ((mod & 0xE) === event_modkey.CTRL
-                           && key >= "a"
-                           && key <= "z") {
+                    && key >= "a"
+                    && key <= "z") {
                     key = String.fromCharCode(key.charCodeAt(0) - 96);
                 } else if ((mod & 0xE) === event_modkey.META
-                           && key == "v") {
+                    && key == "v") {
                     navigator.clipboard.readText().then(tx => write(tx));
                     event.preventDefault();
                     return;
@@ -271,7 +271,7 @@ export function run(button, opts) {
         if (thexterm) {
             thexterm.write(str, done);
         } else {
-            render_terminal(thepre[0], str, {cursor: true, directory: directory});
+            render_terminal(thepre[0], str, { cursor: true, directory: directory });
             done && Promise.resolve(true).then(done);
         }
     }
@@ -285,11 +285,12 @@ export function run(button, opts) {
                 console.log("xterm.js cannot render " + html);
             }
         } else {
-            render_terminal(thepre[0], html, {cursor: true});
+            render_terminal(thepre[0], html, { cursor: true });
         }
     }
 
     function append_data(str, data, done) {
+        console.log(data)
         if (ibuffer !== null) { // haven't started generating output
             ibuffer += str;
             var pos = ibuffer.indexOf("\n\n");
@@ -434,7 +435,7 @@ export function run(button, opts) {
         function load_more() {
             if (!partial_outstanding) {
                 partial_outstanding = true;
-                send({offset: data.end_offset}, function (xdata) {
+                send({ offset: data.end_offset }, function (xdata) {
                     if (xdata.ok && xdata.offset === data.end_offset) {
                         data.data += xdata.data;
                         data.end_offset = xdata.end_offset;
@@ -583,7 +584,7 @@ export function run(button, opts) {
                     if (json.offset <= offset) {
                         succeed(json);
                     } else {
-                        send({write: ""});
+                        send({ write: "" });
                     }
                     ok = true;
                 }
@@ -618,6 +619,8 @@ export function run(button, opts) {
     }
 
     function succeed(data) {
+        console.log("succeed");
+        console.log(data)
         if (queueid) {
             thepre.find("span.pa-runqueue").remove();
         }
@@ -662,6 +665,7 @@ export function run(button, opts) {
             scroll_therun();
             return done();
         } else if (data.done) {
+            console.log("here, done false")
             done(false);
         }
 
@@ -736,7 +740,7 @@ export function run(button, opts) {
         } else {
             done();
             if (data.timed && !hasClass(therun.firstChild, "pa-runrange")) {
-                send({offset: 0}, succeed_add_times);
+                send({ offset: 0 }, succeed_add_times);
             }
         }
     }
@@ -797,11 +801,11 @@ export function run(button, opts) {
     }
 
     function stop() {
-        send({stop: 1});
+        send({ stop: 1 });
     }
 
     function write(value) {
-        send({write: value});
+        send({ write: value });
     }
 
     if (opts.headline && opts.noclear && !thexterm && thepre[0].firstChild) {
@@ -827,7 +831,7 @@ export function run(button, opts) {
 
 
 handle_ui.on("pa-runner", function () {
-    run(this, {focus: true});
+    run(this, { focus: true });
 });
 
 handle_ui.on("pa-run-show", function () {
@@ -836,7 +840,7 @@ handle_ui.on("pa-run-show", function () {
         therun = document.getElementById("pa-run-" + name);
     if (therun.hasAttribute("data-pa-timestamp") && hasClass(therun, "need-run")) {
         const thebutton = jQuery(".pa-runner[value='" + name + "']")[0];
-        run(thebutton, {unfold: true});
+        run(thebutton, { unfold: true });
     } else {
         fold61(therun, jQuery("#run-" + name));
     }

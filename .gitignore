@@ -6,3 +6,4 @@ conf/options.php
 log/
 repo/
 .vagrant/
+node_modules/
