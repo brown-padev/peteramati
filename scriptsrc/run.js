@@ -291,9 +291,13 @@ export function run(button, opts) {
 
     function append_data(str, data, done) {
         console.log(data)
+        console.log(str)
+        console.log(ibuffer === null)
         if (ibuffer !== null) { // haven't started generating output
+            str = "\n\n" + str;
             ibuffer += str;
             var pos = ibuffer.indexOf("\n\n");
+            console.log(pos);
             if (pos < 0) {
                 return; // not ready yet
             }
@@ -326,6 +330,7 @@ export function run(button, opts) {
         }
         if (str !== "") {
             append(str, done);
+            // append(str, done);
         }
     }
 

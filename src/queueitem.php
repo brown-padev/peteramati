@@ -1443,11 +1443,13 @@ class QueueItem
         if ($resp->status === "success") {
             $rr = RunResponse::make_info($runner, $this->info());
             $rr->timestamp = $this->runat;
-            // $rr->done = true;
+            $rr->done = true;
             $rr->data = $resp->results->output;
             $rr->repoid = $this->repo() ? $this->repo()->repoid : 0;
             $this->swap_status(self::STATUS_EVALUATED);
             $this->debug($resp->results);
+            $rr->offset = $offset;
+            $rr->end_offset = strlen($rr->data);
         } else if ($resp->status === "running") {
 
         } else {
