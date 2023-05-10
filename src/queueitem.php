@@ -756,7 +756,7 @@ class QueueItem
             && $this->status >= self::STATUS_DONE
         ) {
             // always evaluate at least once
-            $this->evaluate();
+            // $this->evaluate();
         }
         if ($changed && $this->status >= self::STATUS_CANCELLED) {
             if ($this->eventsource && ($esdir = $this->eventsource_dir())) {

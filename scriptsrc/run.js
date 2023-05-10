@@ -792,7 +792,7 @@ export function run(button, opts) {
 
         jQuery.ajax(form.getAttribute("action"), {
             data: $(form).serializeWith(a),
-            type: "POST", cache: false, dataType: "json", timeout: 30000,
+            type: "POST", cache: false, dataType: "json", timeout: 300000,
             success: function (data) {
                 --send_out;
                 (success || succeed)(data);
