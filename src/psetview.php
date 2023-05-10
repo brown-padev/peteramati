@@ -1176,9 +1176,6 @@ class PsetView {
 
     /** @param array $updates */
     function update_commit_notes($updates) {
-        self::debug("updates");
-        self::debug($updates);
-
         if (!$this->_hash) {
             throw new Error("update_commit_notes with no hash");
         }
@@ -1746,8 +1743,6 @@ class PsetView {
      * @param mixed $jlist
      * @return int|list */
     static function add_joblist($jobid, $jlist) {
-        // self::debug("jlist");
-        // self::debug($jlist);
         if (is_array($jlist)) {
             $i = 0;
             while ($i !== count($jlist) && $jobid < $jlist[$i]) {

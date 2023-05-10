@@ -5,6 +5,7 @@
 import { log_jserror } from "./utils-errors.js";
 
 function jqxhr_error_ftext(jqxhr, status, errormsg) {
+    console.log("jqxhr_error_ftext", jqxhr, status, errormsg)
     if (status === "parsererror")
         return "<0>Internal error: bad response from server";
     else if (errormsg)

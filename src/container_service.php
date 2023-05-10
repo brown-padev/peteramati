@@ -97,13 +97,12 @@ class ContainerServiceClient {
         $this->request("/jobs", "POST", $this->jobReq);
         if ($this->response->jobID) {
             $this->jobId = $this->response->jobID;
-            $this->debug("Job ID: " . $this->jobId);
             return true;
         }
         return false;
     }
 
-    private function check_status(): string {
+    function check_status(): string {
         $this->request("/jobs/" . $this->jobId, "GET");
         return $this->response->status;
     }

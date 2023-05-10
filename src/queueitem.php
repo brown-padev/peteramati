@@ -1139,8 +1139,6 @@ class QueueItem
         $this->_runstatus = 2;
         $this->run_and_log($cmdarg, null, true);
 
-        $this->debug($runner->name);
-        $this->debug($this->runat);
         // save information about execution
         $this->info()->add_recorded_job($runner->name, $this->runat);
     }
@@ -1323,7 +1321,6 @@ class QueueItem
         $user = $this->user();
         // TODO: verify user id
         $userid = (string) $user->contactId;
-        $this->debug("user id: " . $userid);
 
         $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid);
         $this->_container_service_client = new ContainerServiceClient($req);
@@ -1447,7 +1444,7 @@ class QueueItem
             $rr->data = $resp->results->output;
             $rr->repoid = $this->repo() ? $this->repo()->repoid : 0;
             $this->swap_status(self::STATUS_EVALUATED);
-            $this->debug($resp->results);
+            // $this->debug($resp->results);
             $rr->offset = $offset;
             $rr->end_offset = strlen($rr->data);
         } else if ($resp->status === "running") {
@@ -1458,7 +1455,7 @@ class QueueItem
             // $rr->done = true;
             $rr->error = $resp->message;
             $this->swap_status(self::STATUS_EVALUATED);
-            $this->debug($resp->message);
+            // $this->debug($resp->message);
         }
         return $rr;
     }

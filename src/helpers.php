@@ -232,8 +232,8 @@ class JsonResult
 
     function __construct($values = null)
     {
-        debug("values");
-        debug($values);
+        // debug("values");
+        // debug($values);
         if (is_int($values)) {
             $this->status = $values;
             if (func_num_args() === 2) {

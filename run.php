@@ -64,51 +64,12 @@ class RunRequest {
         } else if ($qreq->download) {
             $rreq->download();
         } else {
-            $res = $rreq->run();
             // self::debug("res!");
             // self::debug($res);
-            json_exit($res);
-            // json_exit($rreq->run());
+            json_exit($rreq->myrun());
+            json_exit($rreq->run());
         }
     }
-
-    // private function use_container_service() {
-        // $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
-        // $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
-        // $repoUrl = explode("/", $repoUrl);
-        // $orgName = $repoUrl[0];
-        // $repoName = $repoUrl[1];
-        // $token = $this->conf->opt("githubOAuthToken");
-
-        // $runner = $this->runner();
-        // $testname = $runner->name; // e.g. snowcastmilestone
-        // $psetname = $this->pset()->key; // e.g. snowcast, the key field in psets_config.json
-        // $this->debug("test: " . $testname);
-        // $this->debug("pset: " . $psetname);
-
-        // $info = PsetView::make($this->pset(), $this->user(), $this->user());
-        // $commit = $info->commit_hash();
-        // $this->debug("commit: " . $commit);
-
-        // $user = $this->user();
-        // // TODO: verify user id
-        // $userid = (string) $user->contactId;
-        // $this->debug("user id: " . $userid);        
-        // $this->debug("user email: " . $user->email);
-
-        // $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid);
-        // $client = new ContainerServiceClient($req);
-        // if ($client->submit_job()) {
-        //     // check status periodically
-        //     $resp = $client->wait_for_completion();
-        //     $this->debug($resp->status);
-        //     if ($resp->status === "success") {
-        //         $this->debug($resp->results);
-        //     } else {
-        //         $this->debug($resp->message);
-        //     }
-        // }
-    // }
 
     /** @param bool $many
      * @return ?string */
@@ -136,6 +97,51 @@ class RunRequest {
         fwrite($handle, $output . "\n");
         fclose($handle);
     }
+
+    function myrun() {
+        $qreq = $this->qreq;
+        if ($qreq->run === null || !$qreq->valid_post()) {
+            return self::error("Permission error.");
+        } else if (($err = $this->check_view(false))) {
+            return self::error($err);
+        }
+
+        $info = PsetView::make($this->pset, $this->user, $this->viewer, $qreq->newcommit ?? $qreq->commit);
+        $repoid = $info->repo ? $info->repo->repoid : 0;
+        $repo = Repository::by_id($repoid, $this->conf);
+        $repoUrl = $repo->url;
+        $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
+        $repoUrl = explode("/", $repoUrl);
+
+        $orgName = $repoUrl[0];
+        $repoName = $repoUrl[1];
+        $token = $this->conf->opt("githubOAuthToken");
+
+        $testname = $this->qreq->run;
+        $psetname = $this->pset->key;
+        self::debug("test: $testname");
+        self::debug("pset: $psetname");
+        self::debug("repoUrl: $repoUrl");
+
+        $commit = $info->commit_hash();
+        $this->debug("commit: $commit");
+
+        $userid = $this->user->contactId;
+
+        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid);
+        $client = new ContainerServiceClient($req);
+        if ($client->submit_job()) {
+            // check status periodically
+            $resp = $client->wait_for_completion();
+            $this->debug($resp->status);
+            if ($resp->status === "success") {
+                $this->debug($resp->results);
+            } else {
+                $this->debug($resp->message);
+            }
+        }
+    }
+
 
     function run() {
         $qreq = $this->qreq;
