@@ -232,8 +232,6 @@ class JsonResult
 
     function __construct($values = null)
     {
-        // debug("values");
-        // debug($values);
         if (is_int($values)) {
             $this->status = $values;
             if (func_num_args() === 2) {
@@ -322,18 +320,6 @@ class JsonResult
     {
         $this->result = $j;
     }
-}
-
-function debug($content)
-{
-    $path = "/home/tdong6/debug.txt";
-    // open with write and append
-    ob_start();
-    var_dump($content);
-    $output = ob_get_clean();
-    $handle = fopen($path, "a");
-    fwrite($handle, $output . "\n");
-    fclose($handle);
 }
 
 function json_exit($json, $arg2 = null)

@@ -169,7 +169,19 @@ function psets_json_data($exclude_overrides, &$mtime) {
         $datamap["<overrides>"] = $override_data;
         $mtime = max($mtime, $Conf->setting("psets_override"));
     }
+
     return $datamap;
+}
+
+function debug($content) {
+    $path = "/home/tdong6/debug.txt";
+    // open with write and append
+    ob_start();
+    var_dump($content);
+    $output = ob_get_clean();
+    $handle = fopen($path, "a");
+    fwrite($handle, $output . "\n");
+    fclose($handle);
 }
 
 /** @return object */

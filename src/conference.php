@@ -1672,21 +1672,29 @@ class Conf {
         // create slash-based URLs if appropriate
         if ($param) {
             $has_commit = false;
+            // If a "u" user parameter is present, it substitutes that into the start of the URL path e.g. "~johndoe".
             if (in_array($page, ["index", "pset", "diff", "run", "raw", "file"])
                 && preg_match($are . 'u=([^&#?]+)' . $zre, $param, $m)) {
                 $t = "~" . $m[2] . ($page === "index" ? "" : "/$t");
                 $param = $m[1] . $m[3];
             }
+            if ($page == "pa-container-service" && preg_match($are . 'u=([^&#?]+)' . $zre, $param, $m)) {
+                $t = "pa-container-service/" ;
+                $param = "user=" . $m[2] . "&amp;" . $m[1] . $m[3];
+            }
+            // substitutes the "pset" parameter into a "/$pset" segment.
             if (in_array($page, ["pset", "diff", "raw", "file"])
                 && preg_match($are . 'pset=(\w+)' . $zre, $param, $m)) {
                 $t .= "/" . $m[2];
                 $param = $m[1] . $m[3];
+                // For "diff" and others, it substitutes a commit hash parameter into a "/$commit" segment if present.
                 if (preg_match($are . 'commit=([0-9a-f]+)' . $zre, $param, $m)) {
                     $t .= "/" . $m[2];
                     $param = $m[1] . $m[3];
                     $has_commit = true;
                 }
             }
+            // For "raw" and "file", it substitutes the file parameter into a "/$file" segment.
             if (($page === "raw" || $page === "file")
                 && preg_match($are . 'file=([^&#?]+)' . $zre, $param, $m)) {
                 $t .= "/" . str_replace("%2F", "/", $m[2]);
@@ -1696,10 +1704,12 @@ class Conf {
                        && preg_match($are . 'commit1=([0-9a-f]+)' . $zre, $param, $m)) {
                 $t .= "/" . $m[2];
                 $param = $m[1] . $m[3];
+            // For "profile" and "face", it substitutes a "u" value into a "/$u" segment.
             } else if (($page == "profile" || $page == "face")
                        && preg_match($are . 'u=([^&#?]+)' . $zre, $param, $m)) {
                 $t .= "/" . $m[2];
                 $param = $m[1] . $m[3];
+            // For "help", it substitutes a "t" parameter into a "/$t" segment.
             } else if ($page == "help"
                        && preg_match($are . 't=(\w+)' . $zre, $param, $m)) {
                 $t .= "/" . $m[2];
@@ -1727,6 +1737,9 @@ class Conf {
                 $need_site_path = true;
                 $t = substr($t, $lexpect);
             }
+        }
+        if ($page == "pa-container-service") {
+           return "/" . $t;
         }
         if (($flags & self::HOTURL_ABSOLUTE) || $this !== Conf::$main) {
             return $this->opt("paperSite") . "/" . $t;

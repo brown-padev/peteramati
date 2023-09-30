@@ -70,8 +70,8 @@ class RunRequest
         } else if ($qreq->download) {
             $rreq->download();
         } else {
-            json_exit($rreq->myrun());
-            // json_exit($rreq->run());
+            // json_exit($rreq->myrun());
+            json_exit($rreq->run());
         }
     }
 
@@ -143,25 +143,26 @@ class RunRequest
 
     function parse_run_response($resp, PsetView $info)
     {
-        // $runner = $this->runner();
         $runner = $this->pset->runners[$this->runner->name] ?? null;
-        if ($resp->status === "success") {
-            $rr = RunResponse::make_info($runner, $info);
-            $rr->timestamp = time();
+        $rr = RunResponse::make_info($runner, $info);
+        $rr->timestamp = time();
+
+        if ($resp->status === "success") {  
             $rr->done = true;
             $rr->data = $resp->results->output;
             $rr->repoid = $info->repo ? $info->repo->repoid : 0;
-            $rr->status = QueueItem::STATUS_EVALUATED;
+            $rr->status = QueueItem::STATUS_DONE;
             $rr->offset = 0;
             $rr->end_offset = strlen($rr->data);
+
         } else if ($resp->status === "running") {
+            $rr->status = QueueItem::STATUS_WORKING;
+            $rr->done = false;
 
         } else {
-            $rr = RunResponse::make_info($runner, $info);
-            $rr->timestamp = time();
-            $rr->done = true;
+            $rr->done = false;
             $rr->error = $resp->message;
-            $rr->status = QueueItem::STATUS_EVALUATED;
+            $rr->status = QueueItem::STATUS_SCHEDULED;
         }
         return $rr;
     }

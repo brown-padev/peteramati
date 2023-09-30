@@ -1062,7 +1062,7 @@ class QueueItem
         $this->checkout_code();
 
         // use container service
-        $this->use_container_service();
+        // $this->use_container_service();
 
         // save commit settings
         $this->add_run_settings($this->runsettings ?? []);

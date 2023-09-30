@@ -769,8 +769,14 @@ class PsetRequest {
             }
         }
         if (!empty($runnerbuttons)) {
-            echo Ht::form($this->info->hoturl("=run")),
+            if ($this->pset->use_container_service) {
+                // TODO:
+                echo Ht::form($this->info->hoturl("=pa-container-service")),
                 '<div class="f-contain">';
+            } else {
+                echo Ht::form($this->info->hoturl("=run")),
+                '<div class="f-contain">';
+            }
             ContactView::echo_group("", join("", $runnerbuttons));
             echo "</div></form>\n";
             if ($viewer->isPC && $viewer != $user) {
