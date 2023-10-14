@@ -1608,6 +1608,18 @@ function pa_render_pset_table(ptconf) {
         });
     }
 
+    function set_tables_width() {
+        const lastc = col[col.length - 1];
+        let width = lastc.left + lastc.width;
+        if (ptconf.anonymous) {
+            colmap.name && (width -= colmap.name.width);
+            colmap.year && (width -= colmap.year.width);
+        }
+        $alltables.each(function () {
+            this.style.width = width + "px";
+        });
+    }
+
     function render() {
         const tfixed = $j.hasClass("want-gtable-fixed"),
             thead = ptable_thead(col, ptconf, true);
