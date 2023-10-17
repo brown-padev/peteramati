@@ -643,6 +643,7 @@ class QueueItem {
      * @param array{runat?:int,lockfile?:string,eventsource?:string,maxupdate?:int} $fields
      * @return bool */
     private function swap_status($new_status, $fields = []) {
+        Debugger::debug("swap status {$this->status} {$new_status}");
         $old_status = $this->status;
         $new_runat = array_key_exists("runat", $fields) ? $fields["runat"] : $this->runat;
         if ($this->queueid !== 0) {
@@ -681,6 +682,7 @@ class QueueItem {
             && $old_status < self::STATUS_EVALUATED
             && $this->status >= self::STATUS_DONE) {
             // always evaluate at least once
+            Debugger::debug("684");
             $this->evaluate();
         }
         if ($changed && $this->status >= self::STATUS_CANCELLED) {
@@ -771,6 +773,7 @@ class QueueItem {
             && $this->lockfile
             && RunLogger::active_job_at($this->lockfile) !== $this->runat) {
             // XXX this does not use run timeouts
+            Debugger::debug(RunLogger::active_job_at($this->lockfile) !== $this->runat ? "lockfile {$this->lockfile} is not equal to $this->runat" : "lockfile {$this->lockfile} is equal to $this->runat");
             $this->swap_status(self::STATUS_EVALUATED);
         }
 
@@ -877,18 +880,19 @@ class QueueItem {
         $logbase = $runlog->job_prefix($runat);
         $logFile = "{$logbase}.log";
 
-        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $logFile);
+        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $logFile, $pidfile);
         $container_service_client = new ContainerServiceClient($req);
 
         if ($container_service_client->submit_job()) {
             // TODO: handle error
         }
-        $container_service_client->wait_for_completion();
-        flock($pidfile, LOCK_UN);
+        // $container_service_client->wait_for_completion();
+        // flock($pidfile, LOCK_UN);
     }
 
 
     private function start_command() {
+        Debugger::debug("start_command");
         assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
 
         $repo = $this->repo();
@@ -911,12 +915,12 @@ class QueueItem {
         // otherwise must be enqueued
         assert($this->queueid !== 0);
 
-        if (!chdir(SiteLoader::$root)) {
-            throw new RunnerException("Can’t cd to main directory.");
-        }
-        if (!is_executable("jail/pa-jail")) {
-            throw new RunnerException("The pa-jail program has not been compiled.");
-        }
+        // if (!chdir(SiteLoader::$root)) {
+        //     throw new RunnerException("Can’t cd to main directory.");
+        // }
+        // if (!is_executable("jail/pa-jail")) {
+        //     throw new RunnerException("The pa-jail program has not been compiled.");
+        // }
 
         $info = $this->info();
         $runlog = $info->run_logger();
@@ -930,28 +934,28 @@ class QueueItem {
         }
         $runlog->invalidate_active_job();
 
-        // collect user information
-        if ($runner->username) {
-            $username = $runner->username;
-        } else if ($pset->run_username) {
-            $username = $pset->run_username;
-        } else {
-            $username = "jail61user";
-        }
-        if (!preg_match('/\A\w+\z/', $username)) {
-            throw new RunnerException("Bad run_username.");
-        }
+        // // collect user information
+        // if ($runner->username) {
+        //     $username = $runner->username;
+        // } else if ($pset->run_username) {
+        //     $username = $pset->run_username;
+        // } else {
+        //     $username = "jail61user";
+        // }
+        // if (!preg_match('/\A\w+\z/', $username)) {
+        //     throw new RunnerException("Bad run_username.");
+        // }
 
-        $pwnam = posix_getpwnam($username);
-        $userhome = $pwnam ? $pwnam["dir"] : "/home/jail61";
-        $userhome = preg_replace('/\/+\z/', '', $userhome);
+        // $pwnam = posix_getpwnam($username);
+        // $userhome = $pwnam ? $pwnam["dir"] : "/home/jail61";
+        // $userhome = preg_replace('/\/+\z/', '', $userhome);
 
-        // collect directory information
-        $this->_jaildir = preg_replace('/\/+\z/', '', $this->expand($pset->run_dirpattern));
-        if (!$this->_jaildir) {
-            throw new RunnerException("Bad run_dirpattern.");
-        }
-        $this->_jailhomedir = "{$this->_jaildir}/" . preg_replace('/\A\/+/', '', $userhome);
+        // // collect directory information
+        // $this->_jaildir = preg_replace('/\/+\z/', '', $this->expand($pset->run_dirpattern));
+        // if (!$this->_jaildir) {
+        //     throw new RunnerException("Bad run_dirpattern.");
+        // }
+        // $this->_jailhomedir = "{$this->_jaildir}/" . preg_replace('/\A\/+/', '', $userhome);
 
         // create logfile and pidfile
         $runat = time();
@@ -959,10 +963,20 @@ class QueueItem {
         $this->_logfile = "{$logbase}.log";
         $timingfile = "{$logbase}.log.time";
         $pidfile = $runlog->pid_file();
-        file_put_contents($pidfile, "{$runat} -i\n");
+        // file_put_contents($pidfile, "{$runat} -i\n");
 
-        $f = @fopen($pidfile, "r");
-        flock($f, LOCK_SH | LOCK_NB);
+        $f = @fopen($pidfile, "w");
+        chmod($pidfile, 02770);
+        fwrite($f, "{$runat} -i\n");
+        // $lockRes = flock($f, LOCK_EX);
+        // $lockRes2 = flock($f, LOCK_EX);
+        // Debugger::debug("lockRes: {$lockRes}");
+        // Debugger::debug("lockRes2: {$lockRes2}");
+        // if ($lockRes) {
+        //     Debugger::debug("successfully locked pidfile {$pidfile}");
+        // } else {
+        //     Debugger::debug("failed to lock pidfile {$pidfile}");
+        // }
 
         $inputfifo = "{$logbase}.in";
         if (!posix_mkfifo($inputfifo, 0660)) {
@@ -990,93 +1004,99 @@ class QueueItem {
             return;
         }
         $this->_runstatus = 1;
-        register_shutdown_function([$this, "cleanup"]);
+        // register_shutdown_function([$this, "cleanup"]);
 
         // print json to first line
         $this->log_identifier($esid);
 
-        // use container service
-        $this->use_container_service($f);
 
-        // create jail
-        $this->remove_old_jails();
-        if ($this->run_and_log(["jail/pa-jail", "add", $this->_jaildir, $username])) {
-            throw new RunnerException("Can’t initialize jail.");
-        }
+        // // create jail
+        // $this->remove_old_jails();
+        // if ($this->run_and_log(["jail/pa-jail", "add", $this->_jaildir, $username])) {
+        //     throw new RunnerException("Can’t initialize jail.");
+        // }
 
-        // check out code
-        $this->checkout_code();
+        // // check out code
+        // $this->checkout_code();
 
-        // save commit settings
-        $this->add_run_settings($this->runsettings ?? []);
+        // // save commit settings
+        // $this->add_run_settings($this->runsettings ?? []);
 
-        // actually run
-        $cmdarg = [
-            "jail/pa-jail", "run", "-p{$pidfile}",
-            "-P{$this->runat} \$\$" . ($inputfifo ? " -i" : "")
-        ];
-        if ($runner->timed_replay) {
-            $cmdarg[] = "-t{$timingfile}";
-        }
-        if ($esfile !== null) {
-            $cmdarg[] = "--event-source={$esfile}";
-        }
+        // // actually run
+        // $cmdarg = [
+        //     "jail/pa-jail", "run", "-p{$pidfile}",
+        //     "-P{$this->runat} \$\$" . ($inputfifo ? " -i" : "")
+        // ];
+        // if ($runner->timed_replay) {
+        //     $cmdarg[] = "-t{$timingfile}";
+        // }
+        // if ($esfile !== null) {
+        //     $cmdarg[] = "--event-source={$esfile}";
+        // }
 
-        $skeletondir = $pset->run_skeletondir ? : $this->conf->opt("run_skeletondir");
-        $binddir = $pset->run_binddir ? : $this->conf->opt("run_binddir");
-        if ($skeletondir && $binddir && !is_dir("$skeletondir/proc")) {
-            $binddir = false;
-        }
-        $jfiles = $runner->jailfiles();
+        // $skeletondir = $pset->run_skeletondir ? : $this->conf->opt("run_skeletondir");
+        // $binddir = $pset->run_binddir ? : $this->conf->opt("run_binddir");
+        // if ($skeletondir && $binddir && !is_dir("$skeletondir/proc")) {
+        //     $binddir = false;
+        // }
+        // $jfiles = $runner->jailfiles();
 
-        if ($skeletondir && $binddir) {
-            $binddir = preg_replace('/\/+\z/', '', $binddir);
-            $contents = "/ <- {$skeletondir} [bind-ro";
-            if ($jfiles
-                && !preg_match('/[\s\];]/', $jfiles)
-                && ($jhash = hash_file("sha256", $jfiles)) !== false) {
-                $contents .= " $jhash $jfiles";
-            }
-            $contents .= "]\n{$userhome} <- {$this->_jailhomedir} [bind]";
-            $cmdarg[] = "-u{$this->_jailhomedir}";
-            $cmdarg[] = "-F{$contents}";
-            $homedir = $binddir;
-        } else if ($jfiles) {
-            $cmdarg[] = "-h";
-            $cmdarg[] = "-f{$jfiles}";
-            if ($skeletondir) {
-                $cmdarg[] = "-S{$skeletondir}";
-            }
-            $homedir = $this->_jaildir;
-        } else {
-            throw new RunnerException("Missing jail population configuration.");
-        }
+        // if ($skeletondir && $binddir) {
+        //     $binddir = preg_replace('/\/+\z/', '', $binddir);
+        //     $contents = "/ <- {$skeletondir} [bind-ro";
+        //     if ($jfiles
+        //         && !preg_match('/[\s\];]/', $jfiles)
+        //         && ($jhash = hash_file("sha256", $jfiles)) !== false) {
+        //         $contents .= " $jhash $jfiles";
+        //     }
+        //     $contents .= "]\n{$userhome} <- {$this->_jailhomedir} [bind]";
+        //     $cmdarg[] = "-u{$this->_jailhomedir}";
+        //     $cmdarg[] = "-F{$contents}";
+        //     $homedir = $binddir;
+        // } else if ($jfiles) {
+        //     $cmdarg[] = "-h";
+        //     $cmdarg[] = "-f{$jfiles}";
+        //     if ($skeletondir) {
+        //         $cmdarg[] = "-S{$skeletondir}";
+        //     }
+        //     $homedir = $this->_jaildir;
+        // } else {
+        //     throw new RunnerException("Missing jail population configuration.");
+        // }
 
-        $jmanifest = $runner->jailmanifest();
-        if ($jmanifest) {
-            $cmdarg[] = "-F" . join("\n", $jmanifest);
-        }
+        // $jmanifest = $runner->jailmanifest();
+        // if ($jmanifest) {
+        //     $cmdarg[] = "-F" . join("\n", $jmanifest);
+        // }
 
-        if (($to = $runner->timeout ?? $pset->run_timeout) > 0) {
-            $cmdarg[] = "-T{$to}";
-        }
-        if (($to = $runner->idle_timeout ?? $pset->run_idle_timeout) > 0) {
-            $cmdarg[] = "-I{$to}";
-        }
-        if (($runner->rows ?? 0) > 0 || ($runner->columns ?? 0) > 0) {
-            $rows = ($runner->rows ?? 0) > 0 ? $runner->rows : 25;
-            $cols = ($runner->columns ?? 0) > 0 ? $runner->columns : 80;
-            $cmdarg[] = "--size={$cols}x{$rows}";
-        }
-        if ($inputfifo) {
-            $cmdarg[] = "-i{$inputfifo}";
-        }
-        $cmdarg[] = $homedir;
-        $cmdarg[] = $username;
-        $cmdarg[] = "TERM=xterm-256color";
-        $cmdarg[] = $this->expand($runner->command);
-        $this->_runstatus = 2;
+        // if (($to = $runner->timeout ?? $pset->run_timeout) > 0) {
+        //     $cmdarg[] = "-T{$to}";
+        // }
+        // if (($to = $runner->idle_timeout ?? $pset->run_idle_timeout) > 0) {
+        //     $cmdarg[] = "-I{$to}";
+        // }
+        // if (($runner->rows ?? 0) > 0 || ($runner->columns ?? 0) > 0) {
+        //     $rows = ($runner->rows ?? 0) > 0 ? $runner->rows : 25;
+        //     $cols = ($runner->columns ?? 0) > 0 ? $runner->columns : 80;
+        //     $cmdarg[] = "--size={$cols}x{$rows}";
+        // }
+        // if ($inputfifo) {
+        //     $cmdarg[] = "-i{$inputfifo}";
+        // }
+        // $cmdarg[] = $homedir;
+        // $cmdarg[] = $username;
+        // $cmdarg[] = "TERM=xterm-256color";
+        // $cmdarg[] = $this->expand($runner->command);
+        // $this->_runstatus = 2;
         // $this->run_and_log($cmdarg, null, true);
+
+        // use container service
+        Debugger::debug("use container service");
+        $this->use_container_service($pidfile);
+        // sleep(1);
+        // $f = @fopen($pidfile, "r");
+        // $lockRes = flock($f, LOCK_SH);
+        // Debugger::debug("lockRes: {$lockRes}");
 
         // save information about execution
         $this->info()->add_recorded_job($runner->name, $this->runat);
@@ -1239,6 +1259,7 @@ class QueueItem {
         $runlog = $this->run_logger();
         if ((($write ?? "") === "" && !$stop)
             || $runlog->active_job() !== $this->runat) {
+            Debugger::debug("command_response 1245");
             return $runlog->job_response($this->runat, $offset);
         }
 
@@ -1259,6 +1280,7 @@ class QueueItem {
             }
             $runlog->invalidate_active_job();
             $rr = $runlog->job_response($this->runat, $offset);
+            Debugger::debug("command_response rr $rr->done");
             $usleep = 10;
         } while ($stop
                  && !$rr->done
@@ -1299,6 +1321,7 @@ class QueueItem {
 
         if ($rr->done
             && $this->runner()->evaluate_function) {
+            Debugger::debug("1304");
             $rr->result = $this->evaluate();
         }
 
@@ -1308,6 +1331,7 @@ class QueueItem {
     function cleanup() {
         if ($this->_runstatus === 1) {
             $runlog = $this->run_logger();
+            Debugger::debug("cleanup");
             unlink($runlog->pid_file());
             @unlink($runlog->job_prefix($this->runat) . ".in");
         }

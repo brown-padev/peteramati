@@ -12,8 +12,9 @@ class JobRequest {
     public $commitID;
     public $studentID;
     public $logFile;
+    public $pidFile;
 
-    function __construct($psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile) {
+    function __construct($psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile, $pidFile) {
         $this->psetName = $psetName;
         $this->testName = $testName;
         $this->accessToken = $accessToken;
@@ -22,6 +23,7 @@ class JobRequest {
         $this->commitID = $commitID;
         $this->studentID = $studentID;
         $this->logFile = $logFile;
+        $this->pidFile = $pidFile;
     }
 }
 
