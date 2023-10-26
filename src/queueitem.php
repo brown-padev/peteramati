@@ -760,7 +760,12 @@ class QueueItem {
             && $qs->nrunning < min($ncx, $qs->nconcurrent)) {
             try {
                 // do not start_command if no command
-                $this->start_command();
+                $pset = $this->pset();
+                if ($pset->use_container_service) {
+                    $this->start_command_with_container_service();
+                } else{
+                    $this->start_command_with_jail();
+                } 
             } catch (Exception $e) {
                 $this->last_error = $e->getMessage();
                 $this->swap_status(self::STATUS_CANCELLED);
@@ -854,8 +859,274 @@ class QueueItem {
         fwrite($this->_logstream, "++ " . json_encode($rr) . "\n");
     }
 
-    private function use_container_service($pidfile)
-    {
+    private function start_command_with_jail() {
+        assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
+
+        $repo = $this->repo();
+        $pset = $this->pset();
+        $runner = $this->runner();
+        if (!$repo) {
+            throw new RunnerException("No repository.");
+        } else if (!$pset) {
+            throw new RunnerException("Bad queue item pset.");
+        } else if (!$runner) {
+            throw new RunnerException("Bad queue item runner.");
+        }
+
+        // if no command, skip right to evaluation
+        if (!$runner->command) {
+            $this->swap_status(self::STATUS_EVALUATED, ["runat" => time()]);
+            return;
+        }
+
+        // otherwise must be enqueued
+        assert($this->queueid !== 0);
+
+        if (!chdir(SiteLoader::$root)) {
+            throw new RunnerException("Can’t cd to main directory.");
+        }
+        if (!is_executable("jail/pa-jail")) {
+            throw new RunnerException("The pa-jail program has not been compiled.");
+        }
+
+        $info = $this->info();
+        $runlog = $info->run_logger();
+        if (!$runlog->mkdirs()) {
+            throw new RunnerException("Can’t create log directory.");
+        }
+
+        $runlog->invalidate_active_job();
+        if ($runlog->active_job()) {
+            return;
+        }
+        $runlog->invalidate_active_job();
+
+        // collect user information
+        if ($runner->username) {
+            $username = $runner->username;
+        } else if ($pset->run_username) {
+            $username = $pset->run_username;
+        } else {
+            $username = "jail61user";
+        }
+        if (!preg_match('/\A\w+\z/', $username)) {
+            throw new RunnerException("Bad run_username.");
+        }
+
+        $pwnam = posix_getpwnam($username);
+        $userhome = $pwnam ? $pwnam["dir"] : "/home/jail61";
+        $userhome = preg_replace('/\/+\z/', '', $userhome);
+
+        // collect directory information
+        $this->_jaildir = preg_replace('/\/+\z/', '', $this->expand($pset->run_dirpattern));
+        if (!$this->_jaildir) {
+            throw new RunnerException("Bad run_dirpattern.");
+        }
+        $this->_jailhomedir = "{$this->_jaildir}/" . preg_replace('/\A\/+/', '', $userhome);
+
+        // create logfile and pidfile
+        $runat = time();
+        $logbase = $runlog->job_prefix($runat);
+        $this->_logfile = "{$logbase}.log";
+        $timingfile = "{$logbase}.log.time";
+        $pidfile = $runlog->pid_file();
+        file_put_contents($pidfile, "{$runat}\n");
+        $inputfifo = "{$logbase}.in";
+        if (!posix_mkfifo($inputfifo, 0660)) {
+            $inputfifo = null;
+        }
+        if ($runner->timed_replay) {
+            touch($timingfile);
+        }
+        $this->_logstream = fopen($this->_logfile, "a");
+        $this->bhash = $info->bhash(); // resolve blank hash
+
+        // maybe register eventsource
+        $esfile = $esid = null;
+        if (($this->flags & self::FLAG_NOEVENTSOURCE) === 0
+            && ($esdir = $this->eventsource_dir())) {
+            $esid = bin2hex(random_bytes(16));
+            $esfile = "{$esdir}{$esid}";
+            if (file_exists($esfile)) {
+                $esfile = $esid = null;
+            }
+        }
+
+        if (!$this->swap_status(self::STATUS_WORKING, ["runat" => $runat, "lockfile" => $pidfile, "eventsource" => $esid])) {
+            return;
+        }
+        $this->_runstatus = 1;
+        register_shutdown_function([$this, "cleanup"]);
+
+        // print json to first line
+        $this->log_identifier($esid);
+
+        // create jail
+        $this->remove_old_jails();
+        if ($this->run_and_log(["jail/pa-jail", "add", $this->_jaildir, $username])) {
+            throw new RunnerException("Can’t initialize jail.");
+        }
+
+        // check out code
+        $this->checkout_code();
+
+        // save commit settings
+        $this->add_run_settings($this->runsettings ?? []);
+
+        // actually run
+        $cmdarg = [
+            "jail/pa-jail", "run", "-p{$pidfile}",
+            "-P{$this->runat} \$\$" . ($inputfifo ? " -i" : "")
+        ];
+        if ($runner->timed_replay) {
+            $cmdarg[] = "-t{$timingfile}";
+        }
+        if ($esfile !== null) {
+            $cmdarg[] = "--event-source={$esfile}";
+        }
+
+        $skeletondir = $pset->run_skeletondir ? : $this->conf->opt("run_skeletondir");
+        $binddir = $pset->run_binddir ? : $this->conf->opt("run_binddir");
+        if ($skeletondir && $binddir && !is_dir("$skeletondir/proc")) {
+            $binddir = false;
+        }
+        $jfiles = $runner->jailfiles();
+
+        if ($skeletondir && $binddir) {
+            $binddir = preg_replace('/\/+\z/', '', $binddir);
+            $contents = "/ <- {$skeletondir} [bind-ro";
+            if ($jfiles
+                && !preg_match('/[\s\];]/', $jfiles)
+                && ($jhash = hash_file("sha256", $jfiles)) !== false) {
+                $contents .= " $jhash $jfiles";
+            }
+            $contents .= "]\n{$userhome} <- {$this->_jailhomedir} [bind]";
+            $cmdarg[] = "-u{$this->_jailhomedir}";
+            $cmdarg[] = "-F{$contents}";
+            $homedir = $binddir;
+        } else if ($jfiles) {
+            $cmdarg[] = "-h";
+            $cmdarg[] = "-f{$jfiles}";
+            if ($skeletondir) {
+                $cmdarg[] = "-S{$skeletondir}";
+            }
+            $homedir = $this->_jaildir;
+        } else {
+            throw new RunnerException("Missing jail population configuration.");
+        }
+
+        $jmanifest = $runner->jailmanifest();
+        if ($jmanifest) {
+            $cmdarg[] = "-F" . join("\n", $jmanifest);
+        }
+
+        if (($to = $runner->timeout ?? $pset->run_timeout) > 0) {
+            $cmdarg[] = "-T{$to}";
+        }
+        if (($to = $runner->idle_timeout ?? $pset->run_idle_timeout) > 0) {
+            $cmdarg[] = "-I{$to}";
+        }
+        if (($runner->rows ?? 0) > 0 || ($runner->columns ?? 0) > 0) {
+            $rows = ($runner->rows ?? 0) > 0 ? $runner->rows : 25;
+            $cols = ($runner->columns ?? 0) > 0 ? $runner->columns : 80;
+            $cmdarg[] = "--size={$cols}x{$rows}";
+        }
+        if ($inputfifo) {
+            $cmdarg[] = "-i{$inputfifo}";
+        }
+        $cmdarg[] = $homedir;
+        $cmdarg[] = $username;
+        $cmdarg[] = "TERM=xterm-256color";
+        $cmdarg[] = $this->expand($runner->command);
+        $this->_runstatus = 2;
+        $this->run_and_log($cmdarg, null, true);
+
+        // save information about execution
+        $this->info()->add_recorded_job($runner->name, $this->runat);
+    }
+
+    private function start_command_with_container_service() {
+        assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
+
+        $repo = $this->repo();
+        $pset = $this->pset();
+        $runner = $this->runner();
+        if (!$repo) {
+            throw new RunnerException("No repository.");
+        } else if (!$pset) {
+            throw new RunnerException("Bad queue item pset.");
+        } else if (!$runner) {
+            throw new RunnerException("Bad queue item runner.");
+        }
+
+        // if no command, skip right to evaluation
+        if (!$runner->command) {
+            $this->swap_status(self::STATUS_EVALUATED, ["runat" => time()]);
+            return;
+        }
+
+        // otherwise must be enqueued
+        assert($this->queueid !== 0);
+
+        $info = $this->info();
+        $runlog = $info->run_logger();
+        if (!$runlog->mkdirs()) {
+            throw new RunnerException("Can’t create log directory.");
+        }
+
+        $runlog->invalidate_active_job();
+        if ($runlog->active_job()) {
+            return;
+        }
+        $runlog->invalidate_active_job();
+
+        // create logfile and pidfile
+        $runat = time();
+        $logbase = $runlog->job_prefix($runat);
+        $this->_logfile = "{$logbase}.log";
+        $timingfile = "{$logbase}.log.time";
+        $pidfile = $runlog->pid_file();
+
+        $f = @fopen($pidfile, "w");
+        chmod($pidfile, 02770);
+        fwrite($f, "{$runat} -i\n");
+
+        $inputfifo = "{$logbase}.in";
+        if (!posix_mkfifo($inputfifo, 0660)) {
+            $inputfifo = null;
+        }
+        if ($runner->timed_replay) {
+            touch($timingfile);
+        }
+        $this->_logstream = fopen($this->_logfile, "a");
+        chmod($this->_logfile, 02770);
+        $this->bhash = $info->bhash(); // resolve blank hash
+
+        // maybe register eventsource
+        $esfile = $esid = null;
+        if (($this->flags & self::FLAG_NOEVENTSOURCE) === 0
+            && ($esdir = $this->eventsource_dir())) {
+            $esid = bin2hex(random_bytes(16));
+            $esfile = "{$esdir}{$esid}";
+            if (file_exists($esfile)) {
+                $esfile = $esid = null;
+            }
+        }
+
+        if (!$this->swap_status(self::STATUS_WORKING, ["runat" => $runat, "lockfile" => $pidfile, "eventsource" => $esid])) {
+            return;
+        }
+        $this->_runstatus = 1;
+
+        // print json to first line
+        $this->log_identifier($esid);
+
+        $this->use_container_service($pidfile);
+        // save information about execution
+        $this->info()->add_recorded_job($runner->name, $this->runat);
+    }
+
+    private function use_container_service($pidfile) {
         $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
         $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
         $repoUrl = explode("/", $repoUrl);
@@ -890,217 +1161,6 @@ class QueueItem {
         // flock($pidfile, LOCK_UN);
     }
 
-
-    private function start_command() {
-        Debugger::debug("start_command");
-        assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
-
-        $repo = $this->repo();
-        $pset = $this->pset();
-        $runner = $this->runner();
-        if (!$repo) {
-            throw new RunnerException("No repository.");
-        } else if (!$pset) {
-            throw new RunnerException("Bad queue item pset.");
-        } else if (!$runner) {
-            throw new RunnerException("Bad queue item runner.");
-        }
-
-        // if no command, skip right to evaluation
-        if (!$runner->command) {
-            $this->swap_status(self::STATUS_EVALUATED, ["runat" => time()]);
-            return;
-        }
-
-        // otherwise must be enqueued
-        assert($this->queueid !== 0);
-
-        // if (!chdir(SiteLoader::$root)) {
-        //     throw new RunnerException("Can’t cd to main directory.");
-        // }
-        // if (!is_executable("jail/pa-jail")) {
-        //     throw new RunnerException("The pa-jail program has not been compiled.");
-        // }
-
-        $info = $this->info();
-        $runlog = $info->run_logger();
-        if (!$runlog->mkdirs()) {
-            throw new RunnerException("Can’t create log directory.");
-        }
-
-        $runlog->invalidate_active_job();
-        if ($runlog->active_job()) {
-            return;
-        }
-        $runlog->invalidate_active_job();
-
-        // // collect user information
-        // if ($runner->username) {
-        //     $username = $runner->username;
-        // } else if ($pset->run_username) {
-        //     $username = $pset->run_username;
-        // } else {
-        //     $username = "jail61user";
-        // }
-        // if (!preg_match('/\A\w+\z/', $username)) {
-        //     throw new RunnerException("Bad run_username.");
-        // }
-
-        // $pwnam = posix_getpwnam($username);
-        // $userhome = $pwnam ? $pwnam["dir"] : "/home/jail61";
-        // $userhome = preg_replace('/\/+\z/', '', $userhome);
-
-        // // collect directory information
-        // $this->_jaildir = preg_replace('/\/+\z/', '', $this->expand($pset->run_dirpattern));
-        // if (!$this->_jaildir) {
-        //     throw new RunnerException("Bad run_dirpattern.");
-        // }
-        // $this->_jailhomedir = "{$this->_jaildir}/" . preg_replace('/\A\/+/', '', $userhome);
-
-        // create logfile and pidfile
-        $runat = time();
-        $logbase = $runlog->job_prefix($runat);
-        $this->_logfile = "{$logbase}.log";
-        $timingfile = "{$logbase}.log.time";
-        $pidfile = $runlog->pid_file();
-        // file_put_contents($pidfile, "{$runat} -i\n");
-
-        $f = @fopen($pidfile, "w");
-        chmod($pidfile, 02770);
-        fwrite($f, "{$runat} -i\n");
-        // $lockRes = flock($f, LOCK_EX);
-        // $lockRes2 = flock($f, LOCK_EX);
-        // Debugger::debug("lockRes: {$lockRes}");
-        // Debugger::debug("lockRes2: {$lockRes2}");
-        // if ($lockRes) {
-        //     Debugger::debug("successfully locked pidfile {$pidfile}");
-        // } else {
-        //     Debugger::debug("failed to lock pidfile {$pidfile}");
-        // }
-
-        $inputfifo = "{$logbase}.in";
-        if (!posix_mkfifo($inputfifo, 0660)) {
-            $inputfifo = null;
-        }
-        if ($runner->timed_replay) {
-            touch($timingfile);
-        }
-        $this->_logstream = fopen($this->_logfile, "a");
-        chmod($this->_logfile, 02770);
-        $this->bhash = $info->bhash(); // resolve blank hash
-
-        // maybe register eventsource
-        $esfile = $esid = null;
-        if (($this->flags & self::FLAG_NOEVENTSOURCE) === 0
-            && ($esdir = $this->eventsource_dir())) {
-            $esid = bin2hex(random_bytes(16));
-            $esfile = "{$esdir}{$esid}";
-            if (file_exists($esfile)) {
-                $esfile = $esid = null;
-            }
-        }
-
-        if (!$this->swap_status(self::STATUS_WORKING, ["runat" => $runat, "lockfile" => $pidfile, "eventsource" => $esid])) {
-            return;
-        }
-        $this->_runstatus = 1;
-        // register_shutdown_function([$this, "cleanup"]);
-
-        // print json to first line
-        $this->log_identifier($esid);
-
-
-        // // create jail
-        // $this->remove_old_jails();
-        // if ($this->run_and_log(["jail/pa-jail", "add", $this->_jaildir, $username])) {
-        //     throw new RunnerException("Can’t initialize jail.");
-        // }
-
-        // // check out code
-        // $this->checkout_code();
-
-        // // save commit settings
-        // $this->add_run_settings($this->runsettings ?? []);
-
-        // // actually run
-        // $cmdarg = [
-        //     "jail/pa-jail", "run", "-p{$pidfile}",
-        //     "-P{$this->runat} \$\$" . ($inputfifo ? " -i" : "")
-        // ];
-        // if ($runner->timed_replay) {
-        //     $cmdarg[] = "-t{$timingfile}";
-        // }
-        // if ($esfile !== null) {
-        //     $cmdarg[] = "--event-source={$esfile}";
-        // }
-
-        // $skeletondir = $pset->run_skeletondir ? : $this->conf->opt("run_skeletondir");
-        // $binddir = $pset->run_binddir ? : $this->conf->opt("run_binddir");
-        // if ($skeletondir && $binddir && !is_dir("$skeletondir/proc")) {
-        //     $binddir = false;
-        // }
-        // $jfiles = $runner->jailfiles();
-
-        // if ($skeletondir && $binddir) {
-        //     $binddir = preg_replace('/\/+\z/', '', $binddir);
-        //     $contents = "/ <- {$skeletondir} [bind-ro";
-        //     if ($jfiles
-        //         && !preg_match('/[\s\];]/', $jfiles)
-        //         && ($jhash = hash_file("sha256", $jfiles)) !== false) {
-        //         $contents .= " $jhash $jfiles";
-        //     }
-        //     $contents .= "]\n{$userhome} <- {$this->_jailhomedir} [bind]";
-        //     $cmdarg[] = "-u{$this->_jailhomedir}";
-        //     $cmdarg[] = "-F{$contents}";
-        //     $homedir = $binddir;
-        // } else if ($jfiles) {
-        //     $cmdarg[] = "-h";
-        //     $cmdarg[] = "-f{$jfiles}";
-        //     if ($skeletondir) {
-        //         $cmdarg[] = "-S{$skeletondir}";
-        //     }
-        //     $homedir = $this->_jaildir;
-        // } else {
-        //     throw new RunnerException("Missing jail population configuration.");
-        // }
-
-        // $jmanifest = $runner->jailmanifest();
-        // if ($jmanifest) {
-        //     $cmdarg[] = "-F" . join("\n", $jmanifest);
-        // }
-
-        // if (($to = $runner->timeout ?? $pset->run_timeout) > 0) {
-        //     $cmdarg[] = "-T{$to}";
-        // }
-        // if (($to = $runner->idle_timeout ?? $pset->run_idle_timeout) > 0) {
-        //     $cmdarg[] = "-I{$to}";
-        // }
-        // if (($runner->rows ?? 0) > 0 || ($runner->columns ?? 0) > 0) {
-        //     $rows = ($runner->rows ?? 0) > 0 ? $runner->rows : 25;
-        //     $cols = ($runner->columns ?? 0) > 0 ? $runner->columns : 80;
-        //     $cmdarg[] = "--size={$cols}x{$rows}";
-        // }
-        // if ($inputfifo) {
-        //     $cmdarg[] = "-i{$inputfifo}";
-        // }
-        // $cmdarg[] = $homedir;
-        // $cmdarg[] = $username;
-        // $cmdarg[] = "TERM=xterm-256color";
-        // $cmdarg[] = $this->expand($runner->command);
-        // $this->_runstatus = 2;
-        // $this->run_and_log($cmdarg, null, true);
-
-        // use container service
-        Debugger::debug("use container service");
-        $this->use_container_service($pidfile);
-        // sleep(1);
-        // $f = @fopen($pidfile, "r");
-        // $lockRes = flock($f, LOCK_SH);
-        // Debugger::debug("lockRes: {$lockRes}");
-
-        // save information about execution
-        $this->info()->add_recorded_job($runner->name, $this->runat);
-    }
 
     /** @param list<string> $cmdarg
      * @param ?string $cwd
