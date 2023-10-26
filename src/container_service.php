@@ -48,13 +48,6 @@ class ContainerServiceClient {
         $this->jobReq = $req;
     }
 
-    private function debug($content) {
-        $path = "/home/tdong6/debug.txt";
-        $handle = fopen($path, "a");
-        fwrite($handle, $content . "\n");
-        fclose($handle);
-    }
-
     private function request($endpoint, $method, $content = "") {
         $url = $this->baseHost . $endpoint;
         if ($content !== "") {
@@ -104,21 +97,5 @@ class ContainerServiceClient {
             return true;
         }
         return false;
-    }
-
-    function check_status(): string {
-        $this->request("/jobs/" . $this->jobId, "GET");
-        return $this->response->status;
-    }
-
-    function wait_for_completion() {
-        // block until check_status() returns "completed"
-        while (1) {
-            // TODO: exponential backoff
-            sleep(5);
-            if ($this->check_status() === "success" || $this->check_status() === "failed") {
-                return $this->response;
-            }
-        }
     }
 }
