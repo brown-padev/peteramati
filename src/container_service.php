@@ -90,12 +90,7 @@ class ContainerServiceClient {
         }
     }
 
-    function submit_job(): bool {
+    function submit_job() {
         $this->request("/jobs", "POST", $this->jobReq);
-        if ($this->response->jobID) {
-            $this->jobId = $this->response->jobID;
-            return true;
-        }
-        return false;
     }
 }
