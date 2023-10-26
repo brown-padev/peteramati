@@ -855,7 +855,6 @@ class QueueItem {
         }
         fwrite($this->_logstream, "++ " . json_encode($rr) . "\n");
     }
-  
 
     private function start_command_with_jail() {
         assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
@@ -1120,6 +1119,7 @@ class QueueItem {
         $this->log_identifier($esid);
 
         $this->use_container_service($pidfile);
+
         // save information about execution
         $this->info()->add_recorded_job($runner->name, $this->runat);
     }
@@ -1155,8 +1155,6 @@ class QueueItem {
         if ($container_service_client->submit_job()) {
             // TODO: handle error
         }
-        // $container_service_client->wait_for_completion();
-        // flock($pidfile, LOCK_UN);
     }
 
 
