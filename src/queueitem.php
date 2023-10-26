@@ -855,6 +855,7 @@ class QueueItem {
         }
         fwrite($this->_logstream, "++ " . json_encode($rr) . "\n");
     }
+  
 
     private function start_command_with_jail() {
         assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
