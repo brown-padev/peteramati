@@ -643,7 +643,6 @@ class QueueItem {
      * @param array{runat?:int,lockfile?:string,eventsource?:string,maxupdate?:int} $fields
      * @return bool */
     private function swap_status($new_status, $fields = []) {
-        Debugger::debug("swap status {$this->status} {$new_status}");
         $old_status = $this->status;
         $new_runat = array_key_exists("runat", $fields) ? $fields["runat"] : $this->runat;
         if ($this->queueid !== 0) {
@@ -682,7 +681,6 @@ class QueueItem {
             && $old_status < self::STATUS_EVALUATED
             && $this->status >= self::STATUS_DONE) {
             // always evaluate at least once
-            Debugger::debug("684");
             $this->evaluate();
         }
         if ($changed && $this->status >= self::STATUS_CANCELLED) {
@@ -778,7 +776,6 @@ class QueueItem {
             && $this->lockfile
             && RunLogger::active_job_at($this->lockfile) !== $this->runat) {
             // XXX this does not use run timeouts
-            Debugger::debug(RunLogger::active_job_at($this->lockfile) !== $this->runat ? "lockfile {$this->lockfile} is not equal to $this->runat" : "lockfile {$this->lockfile} is equal to $this->runat");
             $this->swap_status(self::STATUS_EVALUATED);
         }
 
@@ -1319,7 +1316,6 @@ class QueueItem {
         $runlog = $this->run_logger();
         if ((($write ?? "") === "" && !$stop)
             || $runlog->active_job() !== $this->runat) {
-            Debugger::debug("command_response 1245");
             return $runlog->job_response($this->runat, $offset);
         }
 
@@ -1340,7 +1336,6 @@ class QueueItem {
             }
             $runlog->invalidate_active_job();
             $rr = $runlog->job_response($this->runat, $offset);
-            Debugger::debug("command_response rr $rr->done");
             $usleep = 10;
         } while ($stop
                  && !$rr->done
@@ -1381,7 +1376,6 @@ class QueueItem {
 
         if ($rr->done
             && $this->runner()->evaluate_function) {
-            Debugger::debug("1304");
             $rr->result = $this->evaluate();
         }
 
@@ -1391,7 +1385,6 @@ class QueueItem {
     function cleanup() {
         if ($this->_runstatus === 1) {
             $runlog = $this->run_logger();
-            Debugger::debug("cleanup");
             unlink($runlog->pid_file());
             @unlink($runlog->job_prefix($this->runat) . ".in");
         }
