@@ -1152,9 +1152,7 @@ class QueueItem {
         $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $logFile, $pidfile);
         $container_service_client = new ContainerServiceClient($req);
 
-        if ($container_service_client->submit_job()) {
-            // TODO: handle error
-        }
+        $container_service_client->submit_job();
     }
 
 
