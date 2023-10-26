@@ -758,7 +758,12 @@ class QueueItem {
             && $qs->nrunning < min($ncx, $qs->nconcurrent)) {
             try {
                 // do not start_command if no command
-                $this->start_command();
+                $pset = $this->pset();
+                if ($pset->use_container_service) {
+                    $this->start_command_with_container_service();
+                } else{
+                    $this->start_command_with_jail();
+                } 
             } catch (Exception $e) {
                 $this->last_error = $e->getMessage();
                 $this->swap_status(self::STATUS_CANCELLED);
@@ -851,8 +856,7 @@ class QueueItem {
         fwrite($this->_logstream, "++ " . json_encode($rr) . "\n");
     }
 
-
-    private function start_command() {
+    private function start_command_with_jail() {
         assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
 
         $repo = $this->repo();
@@ -1037,6 +1041,120 @@ class QueueItem {
         // save information about execution
         $this->info()->add_recorded_job($runner->name, $this->runat);
     }
+
+    private function start_command_with_container_service() {
+        assert($this->runat === 0 && $this->status === self::STATUS_SCHEDULED);
+
+        $repo = $this->repo();
+        $pset = $this->pset();
+        $runner = $this->runner();
+        if (!$repo) {
+            throw new RunnerException("No repository.");
+        } else if (!$pset) {
+            throw new RunnerException("Bad queue item pset.");
+        } else if (!$runner) {
+            throw new RunnerException("Bad queue item runner.");
+        }
+
+        // if no command, skip right to evaluation
+        if (!$runner->command) {
+            $this->swap_status(self::STATUS_EVALUATED, ["runat" => time()]);
+            return;
+        }
+
+        // otherwise must be enqueued
+        assert($this->queueid !== 0);
+
+        $info = $this->info();
+        $runlog = $info->run_logger();
+        if (!$runlog->mkdirs()) {
+            throw new RunnerException("Can’t create log directory.");
+        }
+
+        $runlog->invalidate_active_job();
+        if ($runlog->active_job()) {
+            return;
+        }
+        $runlog->invalidate_active_job();
+
+        // create logfile and pidfile
+        $runat = time();
+        $logbase = $runlog->job_prefix($runat);
+        $this->_logfile = "{$logbase}.log";
+        $timingfile = "{$logbase}.log.time";
+        $pidfile = $runlog->pid_file();
+
+        $f = @fopen($pidfile, "w");
+        chmod($pidfile, 02770);
+        fwrite($f, "{$runat} -i\n");
+
+        $inputfifo = "{$logbase}.in";
+        if (!posix_mkfifo($inputfifo, 0660)) {
+            $inputfifo = null;
+        }
+        if ($runner->timed_replay) {
+            touch($timingfile);
+        }
+        $this->_logstream = fopen($this->_logfile, "a");
+        chmod($this->_logfile, 02770);
+        $this->bhash = $info->bhash(); // resolve blank hash
+
+        // maybe register eventsource
+        $esfile = $esid = null;
+        if (($this->flags & self::FLAG_NOEVENTSOURCE) === 0
+            && ($esdir = $this->eventsource_dir())) {
+            $esid = bin2hex(random_bytes(16));
+            $esfile = "{$esdir}{$esid}";
+            if (file_exists($esfile)) {
+                $esfile = $esid = null;
+            }
+        }
+
+        if (!$this->swap_status(self::STATUS_WORKING, ["runat" => $runat, "lockfile" => $pidfile, "eventsource" => $esid])) {
+            return;
+        }
+        $this->_runstatus = 1;
+
+        // print json to first line
+        $this->log_identifier($esid);
+
+        $this->use_container_service($pidfile);
+
+        // save information about execution
+        $this->info()->add_recorded_job($runner->name, $this->runat);
+    }
+
+    private function use_container_service($pidfile) {
+        $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
+        $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
+        $repoUrl = explode("/", $repoUrl);
+        $orgName = $repoUrl[0];
+        $repoName = $repoUrl[1];
+        $token = $this->conf->opt("githubOAuthToken");
+
+        $runner = $this->runner();
+        $testname = $runner->name; // e.g. snowcastmilestone
+        $psetname = $this->pset()->key; // e.g. snowcast, the key field in psets_config.json
+
+        $info = PsetView::make($this->pset(), $this->user(), $this->user());
+        $commit = $info->commit_hash();
+
+        $user = $this->user();
+        // TODO: verify user id
+        $userid = (string) $user->contactId;
+
+        $runat = time();
+        $info = $this->info();
+        $runlog = $info->run_logger();
+        $logbase = $runlog->job_prefix($runat);
+        $logFile = "{$logbase}.log";
+
+        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $logFile, $pidfile);
+        $container_service_client = new ContainerServiceClient($req);
+
+        $container_service_client->submit_job();
+    }
+
 
     /** @param list<string> $cmdarg
      * @param ?string $cwd

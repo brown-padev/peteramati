@@ -105,6 +105,7 @@ class Pset {
     public $deadline_college;
     public $deadline_extension;
     public $obscure_late_hours = false;
+    public $use_container_service = false;
 
     /** @var array<string,GradeEntry> */
     public $all_grades = [];
@@ -348,6 +349,7 @@ class Pset {
             $this->deadline = $this->deadline_college ? : $this->deadline_extension;
         }
         $this->obscure_late_hours = self::cbool($p, "obscure_late_hours");
+        $this->use_container_service = self::cbool($p, "use_container_service");
 
         // grades
         $grades = $p->grades ?? null;
