@@ -105,7 +105,6 @@ class Pset {
     public $deadline_college;
     public $deadline_extension;
     public $obscure_late_hours = false;
-    public $use_container_service = false;
 
     /** @var array<string,GradeEntry> */
     public $all_grades = [];
@@ -1284,6 +1283,8 @@ class RunnerConfig {
     public $display_function;
     /** @var null|bool|float */
     public $timed_replay;
+    /** @var bool */
+    public $use_container_service = false;
 
     function __construct($name, $r, $defr, Pset $pset) {
         $loc = ["runners", $name];
@@ -1326,6 +1327,7 @@ class RunnerConfig {
         }
 
         $this->xterm_js = Pset::cbool($loc, $rs, "xterm_js");
+        $this->use_container_service = Pset::cbool($loc, $rs, "use_container_service");
         $this->rows = Pset::cint($loc, $rs, "rows") ?? 0;
         $this->columns = Pset::cint($loc, $rs, "columns") ?? 0;
         $this->font_size = Pset::cint($loc, $rs, "font_size") ?? 0;

@@ -758,8 +758,8 @@ class QueueItem {
             && $qs->nrunning < min($ncx, $qs->nconcurrent)) {
             try {
                 // do not start_command if no command
-                $pset = $this->pset();
-                if ($pset->use_container_service) {
+                $runner = $this->runner();
+                if ($runner->use_container_service) {
                     $this->start_command_with_container_service();
                 } else{
                     $this->start_command_with_jail();
@@ -1118,13 +1118,13 @@ class QueueItem {
         // print json to first line
         $this->log_identifier($esid);
 
-        $this->use_container_service($pidfile);
+        $this->use_container_service($runat, $pidfile);
 
         // save information about execution
         $this->info()->add_recorded_job($runner->name, $this->runat);
     }
 
-    private function use_container_service($pidfile) {
+    private function use_container_service($runat, $pidfile) {
         $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
         $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
         $repoUrl = explode("/", $repoUrl);
@@ -1143,16 +1143,9 @@ class QueueItem {
         // TODO: verify user id
         $userid = (string) $user->contactId;
 
-        $runat = time();
-        $info = $this->info();
-        $runlog = $info->run_logger();
-        $logbase = $runlog->job_prefix($runat);
-        $logFile = "{$logbase}.log";
+        $req = new JobRequest($runat, $psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $this->_logfile, $pidfile);
 
-        $req = new JobRequest($psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $logFile, $pidfile);
-        $container_service_client = new ContainerServiceClient($req);
-
-        $container_service_client->submit_job();
+        ContainerServiceClient::submit_job($req);
     }
 
 
@@ -1323,8 +1316,9 @@ class QueueItem {
         }
         if ($stop) {
             // "ESC Ctrl-C" is captured by pa-jail
-            $runlog->job_write($this->runat, "\x1b\x03");
-            $usleep = 10;
+            // $runlog->job_write($this->runat, "\x1b\x03");
+            // $usleep = 10;
+            ContainerServiceClient::stop_job($this->runat);
         }
         $now = microtime(true);
         do {
