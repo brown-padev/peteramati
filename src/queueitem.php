@@ -1118,13 +1118,13 @@ class QueueItem {
         // print json to first line
         $this->log_identifier($esid);
 
-        $this->use_container_service($runat, $pidfile);
+        $this->use_container_service($runat, $pidfile, $inputfifo);
 
         // save information about execution
         $this->info()->add_recorded_job($runner->name, $this->runat);
     }
 
-    private function use_container_service($runat, $pidfile) {
+    private function use_container_service($runat, $pidfile, $inputFifo) {
         $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
         $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
         $repoUrl = explode("/", $repoUrl);
@@ -1143,7 +1143,7 @@ class QueueItem {
         // TODO: verify user id
         $userid = (string) $user->contactId;
 
-        $req = new JobRequest($runat, $psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $this->_logfile, $pidfile);
+        $req = new JobRequest($runat, $psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $this->_logfile, $pidfile, $inputFifo);
 
         ContainerServiceClient::submit_job($req);
     }

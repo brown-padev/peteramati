@@ -4,17 +4,31 @@
 // See LICENSE for open-source distribution terms
 
 class JobRequest {
+    /** @var string */
+    public $jobID; 
+     /** @var string */
     public $psetName;
+     /** @var string */
     public $testName;
+     /** @var string */
     public $accessToken;
+     /** @var string */
     public $repoOwner;
+     /** @var string */
     public $repoName;
+     /** @var string */
     public $commitID;
+     /** @var string */
     public $studentID;
+     /** @var string */
     public $logFile;
+     /** @var string */
     public $pidFile;
+    /** @var string */
+    public $inputFifo;
 
-    function __construct($psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile, $pidFile) {
+    function __construct($jobID, $psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile, $pidFile, $inputFifo) {
+        $this->jobID = strval($jobID);
         $this->psetName = $psetName;
         $this->testName = $testName;
         $this->accessToken = $accessToken;
@@ -24,6 +38,7 @@ class JobRequest {
         $this->studentID = $studentID;
         $this->logFile = $logFile;
         $this->pidFile = $pidFile;
+        $this->inputFifo = $inputFifo;
     }
 }
 
@@ -40,16 +55,10 @@ class ContainerServiceClient {
     public $response;
     /** @var ?object */
     public $rdata;
-    private $baseHost = "http://localhost:8000"; // https://cs1680.cs.brown.edu/pa-container-service
-    private $jobReq;
-    private $jobId;
+    static $baseHost = "http://localhost:8000"; // https://cs1680.cs.brown.edu/pa-container-service
 
-    function __construct(JobRequest $req) {
-        $this->jobReq = $req;
-    }
-
-    private function request($endpoint, $method, $content = "") {
-        $url = $this->baseHost . $endpoint;
+    private static function request($endpoint, $method, $content = "") {
+        $url = self::$baseHost . $endpoint;
         if ($content !== "") {
             $content = json_encode($content);
         }
@@ -58,6 +67,7 @@ class ContainerServiceClient {
             "header" => "Content-Type: application/json",
             "content" => $content
         ];
+        Debugger::debug($content);
         $context = stream_context_create(array("http" => $htopt));
         if (($stream = fopen($url, "r", false, $context))) {
             if (
@@ -66,31 +76,36 @@ class ContainerServiceClient {
                 && is_array($w)
             ) {
                 if (preg_match(',\AHTTP/[\d.]+\s+(\d+)\s+(.+)\z,', $w[0], $m)) {
-                    $this->status = (int) $m[1];
-                    $this->status_text = $m[2];
+                    $status = (int) $m[1];
+                    $status_text = $m[2];
                 }
                 for ($i = 1; $i != count($w); ++$i) {
                     if (preg_match(',\A(.*?):\s*(.*)\z,', $w[$i], $m))
-                        $this->headers[strtolower($m[1])] = $m[2];
+                        $headers[strtolower($m[1])] = $m[2];
                 }
             }
-            $this->content = stream_get_contents($stream);
+            $content = stream_get_contents($stream);
             if (
-                $this->content !== false
-                && ($j = json_decode($this->content))
+                $content !== false
+                && ($j = json_decode($content))
                 && is_object($j)
             ) {
-                $this->response = $j;
+                $response = $j;
                 $rd = $j->data ?? null;
-                if ($this->status === 200 && is_object($rd)) {
-                    $this->rdata = $rd;
+                if ($status === 200 && is_object($rd)) {
+                    $rdata = $rd;
                 }
             }
             fclose($stream);
         }
     }
 
-    function submit_job() {
-        $this->request("/jobs", "POST", $this->jobReq);
+    static function submit_job(JobRequest $req) {
+        self::request("/jobs", "POST", $req);
+    }
+
+    // job id is run at for queue item
+    static function stop_job($jid) {
+        self::request("/jobs/${jid}", "DELETE");
     }
 }
