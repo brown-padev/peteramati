@@ -1315,10 +1315,14 @@ class QueueItem {
             $usleep = 10;
         }
         if ($stop) {
-            // "ESC Ctrl-C" is captured by pa-jail
-            // $runlog->job_write($this->runat, "\x1b\x03");
-            // $usleep = 10;
-            ContainerServiceClient::stop_job($this->runat);
+            $runner = $this->runner();
+            if ($runner->use_container_service) {
+                ContainerServiceClient::stop_job($this->runat);
+            } else {
+                // "ESC Ctrl-C" is captured by pa-jail
+                $runlog->job_write($this->runat, "\x1b\x03");
+                $usleep = 10;
+            }
         }
         $now = microtime(true);
         do {
