@@ -1318,6 +1318,8 @@ class QueueItem {
             $runner = $this->runner();
             if ($runner->use_container_service) {
                 ContainerServiceClient::stop_job($this->runat);
+                $runlog->job_write($this->runat, "\x1b\x03");
+                $usleep = 10;
             } else {
                 // "ESC Ctrl-C" is captured by pa-jail
                 $runlog->job_write($this->runat, "\x1b\x03");
