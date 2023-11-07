@@ -67,7 +67,6 @@ class ContainerServiceClient {
             "header" => "Content-Type: application/json",
             "content" => $content
         ];
-        Debugger::debug($content);
         $context = stream_context_create(array("http" => $htopt));
         if (($stream = fopen($url, "r", false, $context))) {
             if (
