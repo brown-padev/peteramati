@@ -94,6 +94,8 @@ class QueueItem {
     private $_runstatus;
     /** @var ?string */
     public $last_error;
+    /** @var bool */
+    private $_use_container_service;
 
     const FLAG_UNWATCHED = 1;
     const FLAG_ANONYMOUS = 4;
@@ -759,11 +761,20 @@ class QueueItem {
             try {
                 // do not start_command if no command
                 $runner = $this->runner();
-                if ($runner->use_container_service) {
+                $pset = $this->pset();
+
+                // if runner->use_container_service is unspecified
+                // use pset->use_container_service (false by default)
+
+                $this->_use_container_service = $pset->use_container_service;
+                if ($runner->use_container_service != null) {
+                    $this->_use_container_service = $runner->use_container_service;
+                }
+                if ($this->_use_container_service) {
                     $this->start_command_with_container_service();
-                } else{
+                } else {
                     $this->start_command_with_jail();
-                } 
+                }
             } catch (Exception $e) {
                 $this->last_error = $e->getMessage();
                 $this->swap_status(self::STATUS_CANCELLED);
@@ -1133,14 +1144,13 @@ class QueueItem {
         $token = $this->conf->opt("githubOAuthToken");
 
         $runner = $this->runner();
-        $testname = $runner->name; // e.g. snowcastmilestone
-        $psetname = $this->pset()->key; // e.g. snowcast, the key field in psets_config.json
+        $testname = $runner->name;
+        $psetname = $this->pset()->key;
 
         $info = PsetView::make($this->pset(), $this->user(), $this->user());
         $commit = $info->commit_hash();
 
         $user = $this->user();
-        // TODO: verify user id
         $userid = (string) $user->contactId;
 
         $req = new JobRequest($runat, $psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $this->_logfile, $pidfile, $inputFifo);
@@ -1316,7 +1326,7 @@ class QueueItem {
         }
         if ($stop) {
             $runner = $this->runner();
-            if ($runner->use_container_service) {
+            if ($this->_use_container_service) {
                 ContainerServiceClient::stop_job($this->runat);
                 $runlog->job_write($this->runat, "\x1b\x03");
                 $usleep = 10;

@@ -105,6 +105,7 @@ class Pset {
     public $deadline_college;
     public $deadline_extension;
     public $obscure_late_hours = false;
+    public $use_container_service = false;
 
     /** @var array<string,GradeEntry> */
     public $all_grades = [];
@@ -1283,8 +1284,8 @@ class RunnerConfig {
     public $display_function;
     /** @var null|bool|float */
     public $timed_replay;
-    /** @var bool */
-    public $use_container_service = false;
+    /** @var null|bool */
+    public $use_container_service;
 
     function __construct($name, $r, $defr, Pset $pset) {
         $loc = ["runners", $name];
