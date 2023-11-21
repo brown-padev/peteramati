@@ -5,6 +5,8 @@
 
 class JobRequest {
     /** @var string */
+    public $psetConfigPath;
+     /** @var string */
     public $jobID; 
      /** @var string */
     public $psetName;
@@ -27,7 +29,8 @@ class JobRequest {
     /** @var string */
     public $inputFifo;
 
-    function __construct($jobID, $psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile, $pidFile, $inputFifo) {
+    function __construct($psetConfigPath, $jobID, $psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile, $pidFile, $inputFifo) {
+        $this->psetConfigPath = $psetConfigPath;
         $this->jobID = strval($jobID);
         $this->psetName = $psetName;
         $this->testName = $testName;

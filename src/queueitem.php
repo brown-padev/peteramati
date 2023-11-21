@@ -1136,6 +1136,8 @@ class QueueItem {
     }
 
     private function use_container_service($runat, $pidfile, $inputFifo) {
+        global $Conf;
+
         $repoUrl = $this->repo()->url; // e.g. git@github.com:brown-csci1680/snowcast-jennyyu212
         $repoUrl = substr($repoUrl, strpos($repoUrl, ":") + 1);
         $repoUrl = explode("/", $repoUrl);
@@ -1153,7 +1155,20 @@ class QueueItem {
         $user = $this->user();
         $userid = (string) $user->contactId;
 
-        $req = new JobRequest($runat, $psetname, $testname, $token, $orgName, $repoName, $commit, $userid, $this->_logfile, $pidfile, $inputFifo);
+        $req = new JobRequest(
+            $Conf->opt("psetsConfig"), 
+            $runat, 
+            $psetname, 
+            $testname, 
+            $token, 
+            $orgName, 
+            $repoName, 
+            $commit, 
+            $userid, 
+            $this->_logfile, 
+            $pidfile, 
+            $inputFifo
+        );
 
         ContainerServiceClient::submit_job($req);
     }
