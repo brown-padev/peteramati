@@ -58,10 +58,12 @@ class ContainerServiceClient {
     public $response;
     /** @var ?object */
     public $rdata;
-    static $baseHost = "http://localhost:8000"; // https://cs1680.cs.brown.edu/pa-container-service
+    static $baseHost = "http://localhost:";
 
     private static function request($endpoint, $method, $content = "") {
-        $url = self::$baseHost . $endpoint;
+        global $Conf;
+        $port = isset($Conf->opt["containerServicePort"]) ? $Conf->opt["containerServicePort"] : "8000";
+        $url = self::$baseHost . $port . $endpoint;
         if ($content !== "") {
             $content = json_encode($content);
         }
