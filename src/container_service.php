@@ -110,6 +110,6 @@ class ContainerServiceClient {
 
     // job id is run at for queue item
     static function stop_job($jid) {
-        self::request("/jobs/${jid}", "DELETE");
+        self::request("/jobs/$jid", "DELETE");
     }
 }

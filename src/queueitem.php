@@ -94,8 +94,6 @@ class QueueItem {
     private $_runstatus;
     /** @var ?string */
     public $last_error;
-    /** @var bool */
-    private $_use_container_service;
 
     const FLAG_UNWATCHED = 1;
     const FLAG_ANONYMOUS = 4;
@@ -766,11 +764,11 @@ class QueueItem {
                 // if runner->use_container_service is unspecified
                 // use pset->use_container_service (false by default)
 
-                $this->_use_container_service = $pset->use_container_service;
+                $use_container_service = $pset->use_container_service;
                 if ($runner->use_container_service != null) {
-                    $this->_use_container_service = $runner->use_container_service;
+                    $use_container_service = $runner->use_container_service;
                 }
-                if ($this->_use_container_service) {
+                if ($use_container_service) {
                     $this->start_command_with_container_service();
                 } else {
                     $this->start_command_with_jail();
@@ -1341,15 +1339,17 @@ class QueueItem {
         }
         if ($stop) {
             $runner = $this->runner();
-            if ($this->_use_container_service) {
-                ContainerServiceClient::stop_job($this->runat);
-                $runlog->job_write($this->runat, "\x1b\x03");
-                $usleep = 10;
-            } else {
-                // "ESC Ctrl-C" is captured by pa-jail
-                $runlog->job_write($this->runat, "\x1b\x03");
-                $usleep = 10;
+            $pset = $this->pset();
+            $use_container_service = $pset->use_container_service;
+            if ($runner->use_container_service != null) {
+                $use_container_service = $runner->use_container_service;
             }
+            if ($use_container_service) {
+                ContainerServiceClient::stop_job($this->runat);
+            }
+            // "ESC Ctrl-C" is captured
+            $runlog->job_write($this->runat, "\x1b\x03");
+            $usleep = 10;
         }
         $now = microtime(true);
         do {
