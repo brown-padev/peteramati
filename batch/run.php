@@ -1,6 +1,6 @@
 <?php
-// runenqueue.php -- Peteramati script for adding to the execution queue
-// HotCRP and Peteramati are Copyright (c) 2006-2022 Eddie Kohler and others
+// run.php -- Peteramati script for running a runner in the foreground
+// HotCRP and Peteramati are Copyright (c) 2006-2023 Eddie Kohler and others
 // See LICENSE for open-source distribution terms
 
 if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
@@ -8,27 +8,19 @@ if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
 }
 
 
-class RunEnqueue_Batch {
+class Run_Batch {
     /** @var Conf */
     public $conf;
     /** @var Pset */
     public $pset;
     /** @var RunnerConfig */
     public $runner;
-    /** @var int */
-    public $if_needed = 0;
     /** @var bool */
     public $verbose = false;
-    /** @var ?int */
-    public $chainid;
-    /** @var ?list<string> */
-    public $tags;
     /** @var ?array<string,string> */
     public $runsettings;
     /** @var int */
     public $sset_flags;
-    /** @var bool */
-    public $eventsource = false;
     /** @var list<string> */
     public $usermatch = [];
     /** @var ?string */
@@ -106,125 +98,84 @@ class RunEnqueue_Batch {
     }
 
     /** @return int */
-    function run() {
+    function run_or_warn() {
         $viewer = $this->conf->site_contact();
         $sset = new StudentSet($viewer, $this->sset_flags, [$this, "test_user"]);
         $sset->set_pset($this->pset);
-        $nu = 0;
-        $chain = $this->chainid ?? QueueItem::new_chain();
-        $chainstr = $chain ? " C{$chain}" : "";
+        $nsset = count($sset);
+
+        $infos = [];
         foreach ($sset as $info) {
             if (!$info->repo) {
                 continue;
             }
             if ($this->hash && !$info->set_hash($this->hash, true)) {
-                if ($this->verbose) {
-                    fwrite(STDERR, $this->unparse_key($info, $this->hash) . ": no such commit on {$info->branch}{$chainstr}\n");
+                if ($nsset === 1 || $this->verbose) {
+                    fwrite(STDERR, $this->unparse_key($info, $this->hash) . ": no such commit on {$info->branch}\n");
                 }
                 continue;
             }
             if (!$info->hash()) {
                 continue;
             }
-            $qi = QueueItem::make_info($info, $this->runner);
-            $qi->chain = $chain > 0 ? $chain : null;
-            $qi->runorder = QueueItem::unscheduled_runorder($nu * 10);
-            $qi->flags |= QueueItem::FLAG_UNWATCHED;
-            if (!$this->eventsource) {
-                $qi->flags |= QueueItem::FLAG_NOEVENTSOURCE;
-            }
-            $qi->ifneeded = $this->if_needed;
-            $qi->tags = $this->tags;
-            foreach ($this->runsettings ?? [] as $k => $v) {
-                $qi->runsettings[$k] = $v;
-            }
-            if ($this->if_needed === 0
-                || $qi->count_compatible_responses($this->verbose, $this->if_needed) < $this->if_needed) {
-                $qi->enqueue();
-                if (!$qi->chain) {
-                    $qi->schedule($nu);
-                }
-                if ($this->verbose) {
-                    fwrite(STDERR, "#{$qi->queueid} " . $qi->unparse_key() . ": create{$chainstr}\n");
-                }
-                ++$nu;
-            }
+            $infos[] = $info;
         }
-        if ($chain > 0
-            && ($qi = QueueItem::by_chain($this->conf, $chain))
-            && $qi->schedulable()) {
-            $qi->schedule(0);
+
+        if (count($infos) === 0) {
+            fwrite(STDERR, "No matching users\n");
+            return 1;
+        } else if (count($infos) > 1) {
+            fwrite(STDERR, count($infos) . " matching users, be more specific\n");
+            foreach ($infos as $info) {
+                fwrite(STDERR, "- " . $this->unparse_key($info, $this->hash) . "\n");
+            }
+            return 1;
         }
-        return $nu;
+
+        $qi = QueueItem::make_info($infos[0], $this->runner);
+        $qi->flags |= QueueItem::FLAG_FOREGROUND
+            | QueueItem::FLAG_NOEVENTSOURCE
+            | ($this->verbose ? QueueItem::FLAG_FOREGROUND_VERBOSE : 0);
+        foreach ($this->runsettings ?? [] as $k => $v) {
+            $qi->runsettings[$k] = $v;
+        }
+        $qi->step(new QueueState);
+        if ($qi->foreground_command_status !== null
+            && $qi->foreground_command_status >= 0) {
+            return $qi->foreground_command_status;
+        } else {
+            return 127;
+        }
     }
 
-    /** @return int */
-    function run_or_warn() {
-        $n = $this->run();
-        if ($n === 0) {
-            fwrite(STDERR, "nothing to do\n");
-        }
-        return $n > 0 ? 0 : 1;
-    }
-
-    /** @return RunEnqueue_Batch */
+    /** @return Run_Batch */
     static function make_args(Conf $conf, $argv) {
         $arg = (new Getopt)->long(
             "p:,pset: Problem set",
             "r:,runner:,run: Runner name",
-            "e::,if-needed:: {n} =N Run only if needed",
-            "ensure !",
             "u[]+,user[]+ Match these users",
             "H:,hash:,commit: Use this commit",
-            "c:,chain: Set chain ID",
-            "t[],tag[] Add tag",
             "s[],setting[] Set NAME=VALUE",
-            "event-source,eventsource Listen for EventSource connections",
             "V,verbose",
             "help"
         )->helpopt("help")->parse($argv);
-        $pset_arg = $arg["p"] ?? "";
-        $pset = $conf->pset_by_key($pset_arg);
+        if (($arg["p"] ?? "") === "") {
+            throw new CommandLineException("missing `--pset`");
+        }
+        $pset = $conf->pset_by_key($arg["p"]);
         if (!$pset) {
-            $pset_keys = array_values(array_map(function ($p) { return $p->key; }, $conf->psets()));
-            throw (new CommandLineException($pset_arg === "" ? "`--pset` required" : "Pset `{$pset_arg}` not found"))->add_context("(Options are " . join(", ", $pset_keys) . ".)");
+            throw new CommandLineException("no such pset");
         }
-        $runner_arg = $arg["r"] ?? "";
-        $runner = $pset->runner_by_key($runner_arg);
+        if (($arg["r"] ?? "") === "") {
+            throw new CommandLineException("missing `--runner`");
+        }
+        $runner = $pset->runners[$arg["r"]] ?? null;
         if (!$runner) {
-            $runners = array_keys($pset->runners);
-            sort($runners);
-            throw (new CommandLineException($runner_arg === "" ? "`--runner` required" : "Runner `{$runner_arg}` not found"))->add_context("(Options are " . join(", ", $runners) . ".)");
+            throw new CommandLineException("no such runner");
         }
-        $self = new RunEnqueue_Batch($pset, $runner, $arg["u"] ?? []);
-        if (isset($arg["e"])) {
-            if ($arg["e"] === false) {
-                $self->if_needed = 1;
-            } else {
-                $self->if_needed = $arg["e"];
-            }
-        } else if (isset($arg["ensure"])) {
-            $self->if_needed = 1;
-        }
+        $self = new Run_Batch($pset, $runner, $arg["u"] ?? []);
         if (isset($arg["V"])) {
             $self->verbose = true;
-        }
-        if (isset($arg["c"])) {
-            $chain = $arg["c"][0] === "C" ? substr($arg["c"], 1) : $arg["c"];
-            if (ctype_digit($chain)
-                && QueueItem::valid_chain(intval($chain))) {
-                $self->chainid = intval($chain);
-            } else {
-                throw new CommandLineException("bad `--chain`");
-            }
-        }
-        if (isset($arg["t"])) {
-            foreach ($arg["t"] as $tag) {
-                if (!preg_match('/\A' . TAG_REGEX_NOTWIDDLE . '\z/', $tag)) {
-                    throw new CommandLineException("bad `--tag`");
-                }
-                $self->tags[] = $tag;
-            }
         }
         if (isset($arg["s"])) {
             foreach ($arg["s"] as $setting) {
@@ -240,14 +191,11 @@ class RunEnqueue_Batch {
             }
             $self->hash = $hp;
         }
-        if (isset($arg["event-source"])) {
-            $self->eventsource = true;
-        }
         return $self;
     }
 }
 
 
 if (realpath($_SERVER["PHP_SELF"]) === __FILE__) {
-    exit(RunEnqueue_Batch::make_args(Conf::$main, $argv)->run_or_warn());
+    exit(Run_Batch::make_args(Conf::$main, $argv)->run_or_warn());
 }
