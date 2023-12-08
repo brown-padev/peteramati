@@ -16,7 +16,6 @@ class SiteLoader {
         "Pset" => "src/psetconfig.php",
         "ZipDocument" => "lib/documenthelper.php",
         "Collator" => "lib/collatorshim.php",
-        "Debugger" => "lib/debug.php",
         "ContainerServiceClient" => "src/container_service.php",
         "JobRequest" => "src/container_service.php",
     ];
