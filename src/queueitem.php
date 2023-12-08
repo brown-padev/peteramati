@@ -1344,11 +1344,11 @@ class QueueItem {
             if ($runner->use_container_service != null) {
                 $use_container_service = $runner->use_container_service;
             }
+            // "ESC Ctrl-C" is captured
+            $runlog->job_write($this->runat, "\x1b\x03");
             if ($use_container_service) {
                 ContainerServiceClient::stop_job($this->runat);
             }
-            // "ESC Ctrl-C" is captured
-            $runlog->job_write($this->runat, "\x1b\x03");
             $usleep = 10;
         }
         $now = microtime(true);
