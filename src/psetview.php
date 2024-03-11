@@ -1565,6 +1565,37 @@ class PsetView {
         }
     }
 
+    /** @return ?int */
+    static private function cs131_late_hours($timestamp, $deadline) {
+      // CS 131 late hours formula
+      $submitted = getdate($timestamp);
+      $dead = getdate($deadline);
+      if ($dead["mday"] == $submitted["mday"]) {
+          // time between deadline and start of day at 7am
+          $diff = ($dead["hours"] - 7) * 3600 + ($dead["minutes"]) * 60 + $dead["seconds"];
+          if ($diff < 0) {
+            // deadline before 7am; discount time in [deadline, 7am)
+            $autohours = (int) ceil(($timestamp - ($deadline - $diff)) / 3600);
+          } else {
+            // deadline after 7am, count full time for the day
+            $autohours = (int) ceil(($timestamp - $deadline) / 3600);
+          }
+      } else {
+          // submitted on a later day
+          // 1. count the rest of the deadline day
+          $to_midnight = (23 - $dead["hours"]) * 3600 + (59 - $dead["minutes"]) * 60 + (59 - $dead["seconds"]);
+          // remainder of time between deadline and submission, minus time on deadline day
+          $remainder = $timestamp - $deadline - $to_midnight;
+          assert($remainder >= 0);
+          // 2. time from midnight of deadline day until submission
+          $sub_days = ceil((double)$remainder / 86400.0);
+          // subtract 7 hours per extra day, but don't count if student only used < 7h
+          $remainder = $remainder - $sub_days * 7 * 3600;
+          $autohours = (int) ceil(($to_midnight + max(0, $remainder)) / 3600);
+      }
+      return $autohours;
+    }
+
     /** @param ?int $deadline
      * @param ?int $ts
      * @return ?int */
@@ -1572,8 +1603,9 @@ class PsetView {
         if (!$deadline || ($ts ?? 0) <= 1) {
             return null;
         } else if ($deadline < $ts) {
-            return (int) ceil(($ts - $deadline) / 3600);
-        } else {
+            //return (int) ceil(($ts - $deadline) / 3600);
+	    return self::cs131_late_hours($ts, $deadline);
+	} else {
             return 0;
         }
     }
