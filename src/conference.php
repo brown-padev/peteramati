@@ -2107,8 +2107,13 @@ class Conf {
         if ($Me && !$Me->is_empty()) {
             // profile link
             $profile_parts = [];
-            if ($Me->has_email() && !$Me->is_disabled()) {
-	        $profile_parts[] = '<strong>' . htmlspecialchars($Me->email) . '</strong>';
+            if ($Me->has_email() && !$Me->is_disabled) {
+                $u = '<strong>' . htmlspecialchars($Me->email) . '</strong> ';
+                if ($this->opt("showAnonUserID")) {
+                    $profile_parts[] = $u . ' ' . htmlspecialchars($Me->anon_username);
+                } else {
+                    $profile_parts[] = $u;
+                }
                 /*echo '<a class="q" href="', hoturl("profile"), '"><strong>',
                     htmlspecialchars($Me->email),
                     '</strong></a> &nbsp; <a href="', hoturl("profile"), '">Profile</a>',
