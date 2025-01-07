@@ -18,6 +18,7 @@ class SiteLoader {
         "Collator" => "lib/collatorshim.php",
         "ContainerServiceClient" => "src/container_service.php",
         "JobRequest" => "src/container_service.php",
+        "Midterm2023" => "/opt/peteramati/conf/cs300-s23/midterm2023.php"
     ];
 
     static $suffix_map = [
