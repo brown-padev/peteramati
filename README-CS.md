@@ -185,8 +185,7 @@ and the jail
     	"run_binddir": "/opt/peteramati/jailbind",
     }
 
-```
-
+   ```
 
 
 PA should now be configured to use the jail.  Now we need to slightly
