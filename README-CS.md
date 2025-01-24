@@ -94,7 +94,7 @@ copy of that file to Tstaff** asking them to replace it.
       files need to be readable by `www-data`.  **PA will not load at
       all unless you have a basic configuration present.**  For an
       example, see CS300's PA config repo.
-    - On step 3, the apache config file to edit is in `/etc/apache2/sites-available/default-ssl.conf`. You also want to edit `/etc/apache2/sites-available/default-ssl.conf` to add the line `Redirect permanent / https://<xxx>.cs.brown.edu`.
+    - On step 3, the apache config file to edit is in `/etc/apache2/sites-available/default-ssl.conf`. You also want to edit `/etc/apache2/sites-available/000-default.conf` to add the line `Redirect permanent / https://<xxx>.cs.brown.edu`.
     - Then, follow [these instructions](https://www.digitalocean.com/community/tutorials/how-to-secure-apache-with-let-s-encrypt-on-ubuntu-20-04) to enable HTTPS via Let's Encrypt.
     - On step 5, to create an OAuth token, go to Developer settings > OAUth apps
       on your course Github org's page.
