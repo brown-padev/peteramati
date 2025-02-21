@@ -89,7 +89,7 @@ class Report_Page {
                 if ($info->user->is_anonymous) {
                     $x[$f] = $info->user->anon_username;
                 } else {
-                    $x[$f] = $info->user->email;
+                    $x[$f] = $info->user->github_username;
                 }
             } else if ($f === "year") {
                 $x[$f] = $info->user->studentYear;
@@ -181,8 +181,7 @@ class Report_Page {
         }
 
         $csv->set_filename("{$this->pset->nonnumeric_key}-{$this->filename}.csv");
-        $csv->download_headers();
-        $csv->download();
+        $csv->emit();
         exit;
     }
 }
