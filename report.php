@@ -84,7 +84,7 @@ class Report_Page {
                     $x[$f] = $info->user->email;
                 }
             } else if ($f === "huid") {
-                $x[$f] = $info->user->huid;
+                $x[$f] = $info->user->anon_username;   //$info->user->huid;
             } else if ($f === "user") {
                 if ($info->user->is_anonymous) {
                     $x[$f] = $info->user->anon_username;
