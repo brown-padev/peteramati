@@ -497,7 +497,7 @@ class ContactView {
             return [true, "ERROR: We haven’t confirmed that you can view this repository.<br>
 We only let you view repositories to which your course email address has committed.<br>
 Fix this error by authoring a commit from " . htmlspecialchars($info->user->email) . " and pushing that commit to the repository.<br>
-For example, try these commands: <pre>git commit --allow-empty --author=\"" . htmlspecialchars($uname) . "\" -m \"Confirm repository\"\ngit push</pre>"];
+For example, try these commands: <pre>git commit --allow-empty --author=\"" . htmlspecialchars($uname) . "\" -m \"Confirm repository\"\ngit push origin " . htmlspecialchars($info->branch) . "</pre>"];
         }
     }
 
