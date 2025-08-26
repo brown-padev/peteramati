@@ -1153,6 +1153,7 @@ class QueueItem {
 
         $cmdarg[] = $homedir;
         $cmdarg[] = $username;
+        $cmdarg[] = "LANG=en_US.UTF-8";
         $cmdarg[] = "TERM=xterm-256color";
         $cmdarg[] = $this->expand($runner->command);
         $this->_runstatus = 2;
