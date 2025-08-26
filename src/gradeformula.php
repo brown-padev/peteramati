@@ -106,7 +106,7 @@ class Unary_GradeFormula extends GradeFormula {
         case "lg":
             return $v0 > 0 ? log($v0) / log(2) : null;
         case "floor":
-            return floor($v0);
+            return floor($v);
         case "exp":
             return exp($v);
         }
