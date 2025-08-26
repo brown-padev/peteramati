@@ -15,7 +15,9 @@ class SiteLoader {
         "MessageItem" => "lib/messageset.php",
         "Pset" => "src/psetconfig.php",
         "ZipDocument" => "lib/documenthelper.php",
-        "Collator" => "lib/collatorshim.php"
+        "Collator" => "lib/collatorshim.php",
+        "ContainerServiceClient" => "src/container_service.php",
+        "JobRequest" => "src/container_service.php",
     ];
 
     static $suffix_map = [
