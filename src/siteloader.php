@@ -16,13 +16,11 @@ class SiteLoader {
         "Pset" => "src/psetconfig.php",
         "ZipDocument" => "lib/documenthelper.php",
         "Collator" => "lib/collatorshim.php",
-<<<<<<< HEAD
         "ContainerServiceClient" => "src/container_service.php",
         "JobRequest" => "src/container_service.php",
-        "Midterm2022" => "/opt/peteramati/conf/cs300-s22/midterm2022.php"
-=======
-        "Midterm2023" => "/opt/peteramati/conf/cs300-s23/midterm2023.php"
->>>>>>> 2201c9a (Midterm config in siteloader)
+        "Midterm2023" => "/opt/peteramati/conf/cs300-s23/midterm2023.php",
+        "ContainerServiceClient" => "src/container_service.php",
+        "JobRequest" => "src/container_service.php"
     ];
 
     static $suffix_map = [
