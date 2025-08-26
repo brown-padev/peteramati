@@ -3128,6 +3128,13 @@ h3.gdialog-userids {
 	max-width: 100%;
 }
 }
+
+@media print {
+.pa-dg.pa-with-fixed {
+	break-after: page;
+}
+}
+
 @media screen and (min-width: 1024px) {
 .pa-no-sidebar {
 	display: none;
