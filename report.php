@@ -141,7 +141,7 @@ class Report_Page {
                     continue;
                 } else if (ctype_digit($user) && strlen($user) < 8) {
                     if (($u = $this->conf->user_by_id(intval($user)))) {
-                        $u->set_anonymous($anonymous);
+                        $u->set_anonymous(false);
                     }
                 } else {
                     $u = $this->conf->user_by_whatever($user);
@@ -152,7 +152,7 @@ class Report_Page {
             }
             $sset = StudentSet::make_for($us, $this->viewer);
         }
-        $sset->set_pset($this->pset);
+        $sset->set_pset($this->pset, $anonymous);
         $csv = new CsvGenerator;
         $csv->select($this->fields);
 
