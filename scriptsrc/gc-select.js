@@ -41,7 +41,7 @@ GradeClass.add("select", {
                 ve.insertBefore(opt, ve.firstChild);
             }
             ve.selectedIndex = 0;
-        } else if (gt !== "") {
+        } else if (gt !== "" && ve.options[0].value === "") {
             ve.remove(0);
         }
     },
