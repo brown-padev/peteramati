@@ -268,15 +268,35 @@ class Home_TA_Page {
             $j["student_timestamp"] = $info->student_timestamp(false);
         }
 
+        $j["has_notes"] = false;
         if ($gexp->value_entries()) {
             if (!$pset->gitless_grades) {
                 $gradercid = $info->gradercid();
                 $gi = $info->grade_jnotes();
                 if ($gi && ($gi->linenotes ?? null)) {
-                    $j["has_notes"] = true;
-                } else if ($info->viewer->contactId == $gradercid
-                           && !$info->user->dropped
-                           && !$info->empty_diff_likely()) {
+
+                    //$j["has_notes"] = true;
+                    // CS 300:  Ignore line notes containing "[Do not edit]" for marking as graded
+                    foreach($gi->linenotes as $ln_file => $ln_info) {
+                        $_ln_info = (array) $ln_info;
+                        foreach ($_ln_info as $ln_lineid => $ln_noteinfo) {
+                            if (isset($ln_noteinfo[1])) {
+                                $ln_content = $ln_noteinfo[1];
+                                if (!(strpos($ln_content, "[Do not edit]") !== false)) {
+                                    $j["has_notes"] = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if ($j["has_notes"]) {
+                            break;
+                        }
+                    }
+                }
+                if (!$j["has_notes"]
+                    && $info->viewer->contactId == $gradercid
+                    && !$info->user->dropped
+                    && !$info->empty_diff_likely()) {
                     $info->user->incomplete = "no line notes";
                 }
                 if ($gi
