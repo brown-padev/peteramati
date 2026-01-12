@@ -18,7 +18,6 @@ class LineNote_API {
             || (isset($apply->linea) && !ctype_digit($apply->linea))) {
             return ["ok" => false, "error" => "Invalid request."];
         }
-
         // check permissions and filename
         if (!$info->pc_view) {
             return ["ok" => false, "error" => "Permission error."];
@@ -39,6 +38,7 @@ class LineNote_API {
 
         // find or create note
         $note = $info->line_note($apply->file, $apply->line);
+
         if (isset($apply->oldversion)
             && $apply->oldversion != +$note->version) {
             return ["ok" => false, "error" => "Edit conflict, you need to reload."];
@@ -64,6 +64,7 @@ class LineNote_API {
         if (isset($apply->linea)) {
             $note->linea = intval($apply->linea);
         }
+
         return ["ok" => true, "note" => $note];
     }
 
@@ -77,6 +78,19 @@ class LineNote_API {
         assert($api->repo === null || $api->repo === $info->repo);
         $api->repo = $info->repo;
         assert($info->repo !== null || $api->commit === null);
+
+        if ($api->hash == "best") {
+            $commit = $info->find_commit("grading");
+            if (!$commit) {
+                $commit = $info->find_commit("latest");
+            }
+            if ($commit) {
+                $api->hash = $commit->hash;
+            } else {
+                return ["ok" => false, "error" => "Could not find commit."];
+            }
+        }
+
         if ($info->repo
             && $api->hash
             && !$api->commit

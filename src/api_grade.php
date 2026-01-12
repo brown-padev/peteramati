@@ -131,6 +131,16 @@ class Grade_API {
 
     static function grade(Contact $user, Qrequest $qreq, APIData $api) {
         $info = PsetView::make($api->pset, $api->user, $user);
+        if ($api->hash == "best") {
+            $commit = $info->find_commit("grading");
+            if (!$commit) {
+                $commit = $info->find_commit("latest");
+            }
+            if ($commit) {
+                $api->hash = $commit->hash;
+            }
+        }
+
         if (($err = $api->prepare_grading_commit($info))) {
             return $err;
         }
