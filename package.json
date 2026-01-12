@@ -6,13 +6,13 @@
         "build": "npx webpack"
     },
     "dependencies": {
+        "@vscode/markdown-it-katex": "^1.1.0",
         "@xterm/xterm": "^5.5.0",
         "linkify-it": "latest",
         "markdown-it": "latest",
-        "@vscode/markdown-it-katex": "^1.1.0",
         "markdown-it-attrs": "latest",
         "uglify-js": "^3.17",
-        "webpack": "^5.94.0"
+        "webpack": "^5.104.1"
     },
     "devDependencies": {
         "@eslint/js": "^9.11.0",
