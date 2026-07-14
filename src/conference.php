@@ -769,6 +769,16 @@ class Conf {
         unset($Opt[$name], $this->opt[$name]);
     }
 
+    /** @return string */
+    function repo_dir() {
+        return $this->opt("repoDir") ?? SiteLoader::$root . "/repo";
+    }
+
+    /** @return string */
+    function log_dir() {
+        return $this->opt("logDir") ?? SiteLoader::$root . "/log";
+    }
+
 
     // database
 

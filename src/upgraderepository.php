@@ -45,7 +45,7 @@ class UpgradeRepository {
 
     /** @return bool */
     static function upgrade_runs(Repository $repo) {
-        $logroot = SiteLoader::$root . "/log";
+        $logroot = $repo->conf->log_dir();
         foreach (glob("{$logroot}/run{$repo->cacheid}.pset*") as $dir) {
             $have = "{$dir}/repo{$repo->repoid}";
             $want = "{$dir}/repo{$repo->repogid}";

@@ -373,7 +373,7 @@ class Repository {
     /** @param string $cacheid
      * @return string */
     static function repodir_at(Conf $conf, $cacheid) {
-        return SiteLoader::$root . "/repo/repo" . $cacheid;
+        return $conf->repo_dir() . "/repo" . $cacheid;
     }
 
     /** @param string $repodir

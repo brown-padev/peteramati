@@ -379,20 +379,33 @@ function tempdir($mode = 0700) {
  * @param int $mode
  * @return bool */
 function mk_site_subdir($dir, $mode) {
-    assert(str_starts_with($dir, SiteLoader::$root . "/"));
-    $start = $pos = strlen(SiteLoader::$root);
+    global $Conf;
+    $siteroot = SiteLoader::$root;
+    if (str_starts_with($dir, "{$siteroot}/")) {
+        $base = $siteroot;
+    } else if (($repoDir = $Conf->opt("repoDir")) && str_starts_with($dir, "{$repoDir}/")) {
+        $base = dirname($repoDir);
+    } else if (($logDir = $Conf->opt("logDir")) && str_starts_with($dir, "{$logDir}/")) {
+        $base = dirname($logDir);
+    } else {
+        assert(false, "mk_site_subdir: unexpected directory prefix");
+        return false;
+    }
+
+    $start = $pos = strlen($base);
+    $under_siteroot = $base === $siteroot;
     do {
         $oldpos = $pos;
         assert($dir[$pos] === "/");
         $pos = strpos($dir, "/", $pos + 1) ? : strlen($dir);
-        $path = SiteLoader::$root . substr($dir, $start, $pos - $start);
+        $path = $base . substr($dir, $start, $pos - $start);
         if (!is_dir($path)) {
             if (!mkdir($path, $mode)) {
                 return false;
             }
             chmod($path, $mode);
-            if ($oldpos === $start) {
-                $s = file_get_contents(SiteLoader::$root . "/src/.htaccess");
+            if ($under_siteroot && $oldpos === $start) {
+                $s = file_get_contents("{$siteroot}/src/.htaccess");
                 if ($s === false
                     || file_put_contents("{$path}/.htaccess", $s) !== strlen($s)) {
                     return false;

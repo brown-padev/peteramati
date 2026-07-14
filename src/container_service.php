@@ -58,12 +58,10 @@ class ContainerServiceClient {
     public $response;
     /** @var ?object */
     public $rdata;
-    static $baseHost = "http://localhost:";
-
     private static function request($endpoint, $method, $content = "") {
         global $Conf;
-        $port = isset($Conf->opt["containerServicePort"]) ? $Conf->opt["containerServicePort"] : "8000";
-        $url = self::$baseHost . $port . $endpoint;
+        $base = $Conf->opt("containerServiceUrl") ?? "http://localhost:8000";
+        $url = rtrim($base, "/") . $endpoint;
         if ($content !== "") {
             $content = json_encode($content);
         }

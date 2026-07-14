@@ -134,7 +134,7 @@ function initialize_options() {
         ini_set("memory_limit", $Opt["memoryLimit"]);
     }
     // environment
-    putenv("GIT_REPOCACHE=" . SiteLoader::$root . "/repo");
+    putenv("GIT_REPOCACHE=" . ($Opt["repoDir"] ?? SiteLoader::$root . "/repo"));
     if (isset($Opt["mysql"])) {
         putenv("MYSQL=" . $Opt["mysql"]);
     }

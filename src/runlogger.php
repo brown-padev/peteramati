@@ -29,16 +29,16 @@ class RunLogger {
 
     /** @return string */
     function log_dir() {
-        $root = SiteLoader::$root;
-        return "{$root}/log/run{$this->repo->cacheid}.pset{$this->pset->id}";
+        $logroot = $this->pset->conf->log_dir();
+        return "{$logroot}/run{$this->repo->cacheid}.pset{$this->pset->id}";
     }
 
     /** @param string $suffix
      * @return string */
     function log_file($suffix) {
-        $root = SiteLoader::$root;
+        $logroot = $this->pset->conf->log_dir();
         $id = ($this->repo->rflags & 2) !== 0 ? $this->repo->repogid : $this->repo->repoid;
-        return "{$root}/log/run{$this->repo->cacheid}.pset{$this->pset->id}/repo{$id}.pset{$this->pset->id}{$suffix}";
+        return "{$logroot}/run{$this->repo->cacheid}.pset{$this->pset->id}/repo{$id}.pset{$this->pset->id}{$suffix}";
     }
 
     // log_file(".pid")           PID of active runner
