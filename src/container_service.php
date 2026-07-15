@@ -28,8 +28,10 @@ class JobRequest {
     public $pidFile;
     /** @var string */
     public $inputFifo;
+    /** @var ?array */
+    public $runSettings;
 
-    function __construct($psetConfigPath, $jobID, $psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile, $pidFile, $inputFifo) {
+    function __construct($psetConfigPath, $jobID, $psetName, $testName, $accessToken, $repoOwner, $repoName, $commitID, $studentID, $logFile, $pidFile, $inputFifo, $runSettings = null) {
         $this->psetConfigPath = $psetConfigPath;
         $this->jobID = strval($jobID);
         $this->psetName = $psetName;
@@ -42,6 +44,7 @@ class JobRequest {
         $this->logFile = $logFile;
         $this->pidFile = $pidFile;
         $this->inputFifo = $inputFifo;
+        $this->runSettings = !empty($runSettings) ? (object) $runSettings : null;
     }
 }
 

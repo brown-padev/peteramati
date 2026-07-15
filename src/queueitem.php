@@ -1248,6 +1248,7 @@ class QueueItem {
         $this->use_container_service($runat, $pidfile, $inputfifo);
 
         // save information about execution
+        $foreground = ($this->flags & self::FLAG_FOREGROUND) !== 0;
         if ($foreground) {
             $this->foreground_command_status = $s;
         } else {
@@ -1278,18 +1279,19 @@ class QueueItem {
         $userid = (string) $user->contactId;
 
         $req = new JobRequest(
-            $Conf->opt("psetsConfig"), 
-            $runat, 
-            $psetname, 
-            $testname, 
-            $token, 
-            $orgName, 
-            $repoName, 
-            $commit, 
-            $userid, 
-            $this->_logfile, 
-            $pidfile, 
-            $inputFifo
+            $Conf->opt("psetsConfig"),
+            $runat,
+            $psetname,
+            $testname,
+            $token,
+            $orgName,
+            $repoName,
+            $commit,
+            $userid,
+            $this->_logfile,
+            $pidfile,
+            $inputFifo,
+            $this->runsettings
         );
 
         ContainerServiceClient::submit_job($req);
