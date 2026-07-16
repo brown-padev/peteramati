@@ -1272,7 +1272,7 @@ class QueueItem {
         $testname = $runner->name;
         $psetname = $this->pset()->key;
 
-        $info = PsetView::make($this->pset(), $this->user(), $this->user());
+        $info = $this->info();
         $commit = $info->commit_hash();
 
         $user = $this->user();
