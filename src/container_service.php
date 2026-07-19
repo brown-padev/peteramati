@@ -113,4 +113,25 @@ class ContainerServiceClient {
     static function stop_job($jid) {
         self::request("/jobs/$jid", "DELETE");
     }
+
+    /** Generate a signed WebSocket URL for a display connection.
+     * @param string $jobID
+     * @param int $userID
+     * @return ?string */
+    static function display_url($jobID, $userID) {
+        global $Conf;
+        $key = $Conf->opt("displayHmacKey");
+        $agentUrl = $Conf->opt("agentExternalUrl");
+        if (!$key || !$agentUrl) {
+            return null;
+        }
+        $expires = time() + 3600; // 1 hour
+        $message = $jobID . ":" . $userID . ":" . $expires;
+        $token = hash_hmac("sha256", $message, $key);
+        $base = rtrim($agentUrl, "/");
+        return $base . "/display/" . urlencode($jobID)
+            . "?token=" . urlencode($token)
+            . "&user=" . urlencode($userID)
+            . "&expires=" . $expires;
+    }
 }

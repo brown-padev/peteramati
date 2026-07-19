@@ -895,6 +895,9 @@ class PsetRequest {
             $this->conf->add_stylesheet("stylesheets/xterm.css");
             $this->conf->add_javascript("scripts/xterm.js");
         }
+        if ($this->pset->has_display) {
+            Ht::stash_html('<script type="module">import RFB from "/scripts/novnc/core/rfb.js"; window.RFB = RFB;</script>' . "\n");
+        }
         $this->conf->header('<span class="pset-title">' . htmlspecialchars($this->pset->title) . '</span>', "body-pset");
         if ($this->viewer->isPC) {
             $this->echo_session_list_links();

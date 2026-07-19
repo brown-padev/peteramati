@@ -243,6 +243,9 @@ class RunRequest {
             $this->conf->add_stylesheet("stylesheets/xterm.css");
             $this->conf->add_javascript("scripts/xterm.js");
         }
+        if ($this->pset->has_display) {
+            Ht::stash_html('<script type="module">import RFB from "./scripts/novnc/core/rfb.js"; window.RFB = RFB;</script>' . "\n");
+        }
 
         $t = $this->pset->title;
         if ($this->if_needed) {

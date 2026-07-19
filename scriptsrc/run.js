@@ -145,7 +145,9 @@ export function run(button, opts) {
         queueid = opts.queueid || null, was_onqueue = false,
         eventsource = null,
         sendtimeout = null,
-        completed = false;
+        completed = false,
+        therfb = null,
+        display_url_stored = null;
 
     therunout && removeClass(therunout, "hidden");
     removeClass(therun, "need-run");
@@ -209,11 +211,115 @@ export function run(button, opts) {
         if (fontsize && fontsize > 0 && fontsize == fontsize) {
             args.fontSize = fontsize;
         }
+        if (therun.getAttribute("data-pa-display") === "true") {
+            args.convertEol = true;
+        }
         thexterm = new Terminal(args);
         thexterm.open(thepre[0]);
         thexterm.attachCustomKeyEventHandler(make_xterm_write_handler(write));
         if (opts.focus) {
             thexterm.focus();
+        }
+    }
+
+    // Create VNC display pane if configured
+    let vnc_pane = null;
+    if (therun.getAttribute("data-pa-display") === "true" && window.RFB) {
+        // Remove any existing display elements from a previous run.
+        // The <pre> may have been reparented into .pa-run-console, so
+        // move it back to therun before removing old elements.
+        const old_console = therun.querySelector(".pa-run-console");
+        if (old_console) {
+            const pre = old_console.querySelector("pre.pa-runpre");
+            if (pre) {
+                therun.appendChild(pre);
+            }
+        }
+        $(therun).children(".pa-run-pane-title, .pa-run-vnc, .pa-run-console").remove();
+
+        const run_content = therun;
+        removeClass(run_content, "pa-run-short");
+        addClass(run_content, "pa-run-display");
+
+        // VNC section with title bar
+        const vnc_header = document.createElement("h4");
+        vnc_header.className = "pa-run-pane-title";
+        vnc_header.textContent = "Display (VNC)";
+        run_content.insertBefore(vnc_header, run_content.firstChild);
+        vnc_pane = document.createElement("div");
+        vnc_pane.className = "pa-run-vnc";
+        vnc_header.after(vnc_pane);
+
+        // Console section with title bar
+        const console_header = document.createElement("h4");
+        console_header.className = "pa-run-pane-title";
+        console_header.textContent = "Serial Console";
+        vnc_pane.after(console_header);
+        const console_wrapper = document.createElement("div");
+        console_wrapper.className = "pa-run-console";
+        console_header.after(console_wrapper);
+        console_wrapper.appendChild(thepre[0]);
+
+        if (thexterm) {
+            // xterm.js mode: resize to fit the console pane.
+            // ResizeObserver waits until flex layout has computed the height.
+            const resizeXtermToFit = function() {
+                const xtermEl = console_wrapper.querySelector(".xterm-screen");
+                if (!xtermEl || !thexterm) return;
+                const currentRows = thexterm.rows;
+                const currentHeight = xtermEl.offsetHeight;
+                if (currentRows <= 0 || currentHeight <= 0) return;
+                const cellHeight = currentHeight / currentRows;
+                const availableHeight = console_wrapper.clientHeight;
+                if (availableHeight <= 0) return;
+                const rows = Math.max(5, Math.floor(availableHeight / cellHeight));
+                if (rows !== currentRows) {
+                    thexterm.resize(thexterm.cols, rows);
+                }
+            };
+            const observer = new ResizeObserver(resizeXtermToFit);
+            observer.observe(console_wrapper);
+        } else {
+            // Non-xterm mode: use PA's HTML terminal rendering.
+            // Set up auto-scroll on the console wrapper instead of therun.
+            console_wrapper.setAttribute("data-pa-runbottom", "true");
+            console_wrapper.addEventListener("scroll", function() {
+                requestAnimationFrame(function() {
+                    if (console_wrapper.scrollTop + console_wrapper.clientHeight >= console_wrapper.scrollHeight - 10)
+                        console_wrapper.setAttribute("data-pa-runbottom", "true");
+                    else
+                        console_wrapper.removeAttribute("data-pa-runbottom");
+                });
+            });
+        }
+    }
+
+    let vnc_retry_count = 0;
+    function connect_vnc() {
+        if (!display_url_stored || !vnc_pane || !window.RFB || therfb || completed) {
+            return;
+        }
+        try {
+            therfb = new window.RFB(vnc_pane, display_url_stored);
+            therfb.scaleViewport = true;
+            therfb.resizeSession = false;
+            therfb.addEventListener("disconnect", function(e) {
+                therfb = null;
+                // Retry on unexpected disconnect if job is still running
+                if (!e.detail.clean && !completed && vnc_retry_count < 20) {
+                    vnc_retry_count++;
+                    setTimeout(connect_vnc, 1000);
+                }
+            });
+            therfb.addEventListener("connect", function() {
+                vnc_retry_count = 0;
+            });
+        } catch (e) {
+            therfb = null;
+            if (!completed && vnc_retry_count < 20) {
+                vnc_retry_count++;
+                setTimeout(connect_vnc, 1000);
+            }
         }
     }
 
@@ -229,6 +335,15 @@ export function run(button, opts) {
                     therun.scrollTop = Math.max(therun.scrollHeight - therun.clientHeight, 0);
                 }
             });
+        }
+        // In display mode without xterm, scroll the console wrapper
+        if (!thexterm && vnc_pane) {
+            const cw = therun.querySelector(".pa-run-console");
+            if (cw && cw.hasAttribute("data-pa-runbottom")) {
+                requestAnimationFrame(function() {
+                    cw.scrollTop = Math.max(cw.scrollHeight - cw.clientHeight, 0);
+                });
+            }
         }
     }
 
@@ -264,6 +379,10 @@ export function run(button, opts) {
         removeClass(therun, "pa-run-active");
         if (isdone !== false && !completed) {
             hide_cursor();
+            if (therfb) {
+                try { therfb.disconnect(); } catch (e) {}
+                therfb = null;
+            }
             if (button.hasAttribute("data-pa-run-grade")) {
                 grades_fetch(psetinfo); // XXX not on replay
             }
@@ -680,6 +799,14 @@ export function run(button, opts) {
             eventsource = new EventSource(window.siteinfo.base.concat("runevents/v1/", data.eventsource));
             eventsource.onmessage = succeed_eventsource;
             eventsource.onerror = error_eventsource;
+        }
+
+        // Connect noVNC display if URL provided and not yet connected
+        if (data.display_url && !display_url_stored) {
+            display_url_stored = data.display_url;
+            if (vnc_pane && window.RFB) {
+                connect_vnc();
+            }
         }
 
         if (!checkt && data.timestamp) {

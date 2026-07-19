@@ -60,6 +60,8 @@ class RunResponse implements JsonSerializable {
     public $result;
     /** @var ?string */
     public $log_file;
+    /** @var ?string */
+    public $display_url;
 
     /** @return RunResponse */
     static function make_info(RunnerConfig $runner, PsetView $info) {

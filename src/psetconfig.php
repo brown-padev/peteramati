@@ -196,6 +196,8 @@ class Pset {
     public $has_transfer_warnings;
     /** @var bool */
     public $has_xterm_js;
+    /** @var bool */
+    public $has_display;
 
     /** @var null|int|string */
     public $diff_base;
@@ -469,7 +471,7 @@ class Pset {
         // runners
         $runners = $p->runners ?? null;
         $default_runner = $p->default_runner ?? null;
-        $this->has_transfer_warnings = $this->has_xterm_js = false;
+        $this->has_transfer_warnings = $this->has_xterm_js = $this->has_display = false;
         if (is_array($runners) || is_object($runners)) {
             foreach ((array) $runners as $k => $v) {
                 $r = new RunnerConfig(is_int($k) ? $k + 1 : $k, $v, $default_runner, $this);
@@ -482,6 +484,9 @@ class Pset {
                 }
                 if ($r->xterm_js) {
                     $this->has_xterm_js = true;
+                }
+                if ($r->display_port || $r->display_address) {
+                    $this->has_display = true;
                 }
             }
         } else if ($runners) {
@@ -1364,6 +1369,10 @@ class RunnerConfig {
     public $rerun_timestamp;
     /** @var ?bool */
     public $xterm_js;
+    /** @var ?int */
+    public $display_port;
+    /** @var ?string */
+    public $display_address;
     /** @var int */
     public $rows;
     /** @var int */
@@ -1434,6 +1443,8 @@ class RunnerConfig {
         }
 
         $this->xterm_js = Pset::cbool($loc, $rs, "xterm_js");
+        $this->display_port = Pset::cint($loc, $rs, "display_port");
+        $this->display_address = Pset::cstr($loc, $rs, "display_address");
         $this->use_container_service = Pset::cbool($loc, $rs, "use_container_service");
         $this->rows = Pset::cint($loc, $rs, "rows") ?? 0;
         $this->columns = Pset::cint($loc, $rs, "columns") ?? 0;
@@ -1554,6 +1565,9 @@ class RunnerConfig {
         }
         if ($this->timed_replay_start) {
             $t .= " data-pa-start=\"" . htmlspecialchars($this->timed_replay_start) . "\"";
+        }
+        if ($this->display_port || $this->display_address) {
+            $t .= " data-pa-display=\"true\"";
         }
         return $t;
     }

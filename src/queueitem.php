@@ -1537,6 +1537,11 @@ class QueueItem {
             $rr->status = "done";
         } else if (Conf::$now - $this->runat <= 600) {
             $rr->status = "working";
+            if ($runner->display_port || $runner->display_address) {
+                $rr->display_url = ContainerServiceClient::display_url(
+                    strval($this->runat), $this->info()->viewer->contactId
+                );
+            }
         } else {
             $rr->status = "old";
         }
