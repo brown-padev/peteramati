@@ -3,9 +3,11 @@
     "email": "ekohler@gmail.com",
     "repository": "github:kohler/peteramati",
     "scripts": {
-        "build": "npx webpack"
+        "build": "npx webpack",
+        "build-deps": "mkdir -p scripts/novnc && cp -r node_modules/@novnc/novnc/core node_modules/@novnc/novnc/vendor scripts/novnc/"
     },
     "dependencies": {
+        "@novnc/novnc": "^1.7.0",
         "@vscode/markdown-it-katex": "^1.1.0",
         "@xterm/xterm": "^5.5.0",
         "linkify-it": "latest",
